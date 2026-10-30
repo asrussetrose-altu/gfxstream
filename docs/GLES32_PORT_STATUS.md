@@ -72,3 +72,40 @@ property.
 - Gfxstream build guidance: use the Android emulator tree's
   `external/qemu` build driver for emulator validation, not the standalone
   CMake DLL as a replacement.
+
+
+## Original Emulator 37.2.12 DLL inspection (2026-10-30)
+
+The user supplied the untouched DLL at `orig_dll/libgfxstream_backend.dll`.
+It was inspected with PE parsing in a Windows GitHub Actions runner.
+
+- File size: 22,858,904 bytes
+- SHA-256: `6cd0f21087fa6e6c4f5ab69de59bfe6d5d0cf663ff59b2517796d4d0886545d1`
+- PE machine: AMD64 / x86-64 (`0x8664`)
+- PE timestamp: 2026-09-23 20:54:26 UTC
+- Named exports: 349
+
+A complete name-by-name comparison with the previous standalone build
+(345 named exports) proves it is missing exactly four names from the original:
+
+- `AmdPowerXpressRequestHighPerformance`
+- `NvOptimusEnablement`
+- `android_setOpenglesRenderer`
+- `android_stopOpenglesRenderer`
+
+There are no extra named exports in the standalone build. The two
+Amd/Nv exports are GPU-selection hints; the two android exports are required
+emulator renderer lifecycle entry points. All four must be retained in a
+replacement build. This confirms that adding only two stub exports would
+still not reproduce the original DLL's export surface.
+
+The original DLL also imports emulator integration libraries including
+`libandroid-emu-base-logging.dll`, `libandroid-emu-agents.dll`,
+`libandroid-emu-protos.dll`, `libandroid-emu-metrics.dll`,
+`libabseil_dll.dll`, and `liblibprotobuf.dll`. This further confirms the
+need to build through the emulator parent integration rather than the
+standalone Gfxstream target.
+
+The complete machine-readable PE report and export list are available as the
+GitHub Actions artifact named `original-dll-analysis` from run
+`41006969411`.
