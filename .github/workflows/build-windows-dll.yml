@@ -2,6 +2,21 @@ name: Build Windows libgfxstream_backend.dll
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-windows-dll.yml'
+      - '**/*.cpp'
+      - '**/*.cc'
+      - '**/*.c'
+      - '**/*.h'
+      - '**/*.hpp'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+
+permissions:
+  contents: read
 
 jobs:
   build-windows:
@@ -10,41 +25,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Ninja
-        run: choco install ninja -y
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          cmake --version
+          msbuild -version
+          $vs = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\bin\clang-cl.exe' -ErrorAction SilentlyContinue
+          if (-not $vs) {
+            throw 'Visual Studio ClangCL toolset was not found on this runner.'
+          }
+          & $vs.FullName --version
 
       - name: Configure
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          mkdir build
-          cd build
-          cmake .. -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DCMAKE_C_COMPILER=clang-cl ^
-            -DCMAKE_CXX_COMPILER=clang-cl ^
-            -DCMAKE_CXX_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX /Wno-everything" ^
-            -DCMAKE_C_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX /Wno-everything"
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
 
-      - name: Build
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          cd build
-          ninja -k 0 gfxstream_backend
+      - name: Build backend
+        run: cmake --build build --config Release --target gfxstream_backend --parallel
 
-      - name: Collect DLLs
-        shell: bash
+      - name: Collect backend DLL
+        shell: pwsh
         run: |
-          mkdir -p artifact
-          find build -name "*gfxstream*.dll" -exec cp {} artifact/ \; || true
-          find build -name "*.dll" -exec cp {} artifact/ \; || true
-          echo "=== DLLs found ==="
-          ls -la artifact/ || true
+          $dll = Get-ChildItem -Path build -Recurse -File -Filter 'gfxstream_backend.dll' |
+            Select-Object -First 1
+          if (-not $dll) {
+            throw 'gfxstream_backend.dll was not produced by the build.'
+          }
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item -LiteralPath $dll.FullName -Destination 'artifact/libgfxstream_backend.dll'
+          Write-Host "Collected: $($dll.FullName)"
+          Get-FileHash 'artifact/libgfxstream_backend.dll' -Algorithm SHA256
 
-      - name: Upload
+      - name: Upload DLL
         uses: actions/upload-artifact@v4
         with:
           name: libgfxstream_backend-windows
-          path: artifact/
-          if-no-files-found: warn
+          path: artifact/libgfxstream_backend.dll
+          if-no-files-found: error
