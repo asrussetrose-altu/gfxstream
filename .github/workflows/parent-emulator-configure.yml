@@ -1,0 +1,79 @@
+name: Parent emulator DLL - Stage 1 configure only
+
+# Manual only. Never on push.
+# Stage 1: repo init + partial sync (same 3 projects as Stage 0),
+# then configure the parent emulator tree WITHOUT compiling.
+# No DLL, no install, no overlay yet: the gfxstream overlay
+# (minimal, gate OFF) comes at the full-build stage, not here.
+# The configure flag spelling is the known uncertainty in this
+# stage (see agent01-parent-build.md section 8): the help step
+# runs first so its output is in the log even if the configure
+# candidate flag is rejected. The configure step is bounded to
+# 120 minutes so a mis-parsed flag that starts a full build
+# cannot burn the whole 6-hour job cap unnoticed.
+# Target labelling (unchanged): emu-master-dev is a moving
+# branch, NOT a 37.2.12 pin. Any later DLL from this tree is
+# "parent-built, export-compared, user-tested on 37.2.12",
+# never "the 37.2.12 DLL rebuilt from source".
+# Gate stays OFF: translatorSupportsGLES32() returns false.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage1-configure:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Report free disk before sync
+        shell: pwsh
+        run: |
+          Get-PSDrive C | Select-Object Used, Free
+          Get-ComputerInfo | Select-Object TotalPhysicalMemory
+      - name: Install repo tool (Windows form, per WINDOWS-DEV.md)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\bin" | Out-Null
+          curl.exe -o "$env:USERPROFILE\bin\repo" http://storage.googleapis.com/git-repo-downloads/repo
+          "@call python %~dp0repo %* " | Out-File -Encoding ascii "$env:USERPROFILE\bin\repo.cmd"
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\bin"
+          git config --global core.autocrlf false
+          git config --global core.symlinks true
+      - name: Repo init and partial sync (Stage 0 proven)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\emu-master-dev | Out-Null
+          Set-Location C:\emu-master-dev
+          repo init -u https://android.googlesource.com/platform/manifest -b emu-master-dev --depth=1
+          repo sync -j 8 external/qemu hardware/google/gfxstream hardware/google/aemu
+          Get-ChildItem C:\emu-master-dev | Select-Object Name
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Record synced HEAD SHAs
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          git -C external/qemu rev-parse HEAD
+          git -C hardware/google/gfxstream rev-parse HEAD
+          git -C hardware/google/aemu rev-parse HEAD
+      - name: Show rebuild entry point and help
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Get-ChildItem android | Where-Object { $_.Name -like 'rebuild*' } | Select-Object Name, Length
+          if (Test-Path android\rebuild.cmd) { cmd /c android\rebuild.cmd --help }
+          elseif (Test-Path android\rebuild.bat) { cmd /c android\rebuild.bat --help }
+          elseif (Test-Path android\rebuild.sh) { bash android/rebuild.sh --help }
+          else { Write-Output 'NO-REBUILD-WRAPPER-FOUND'; exit 1 }
+      - name: Configure only (candidate flag, bounded)
+        shell: pwsh
+        timeout-minutes: 120
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          if (Test-Path android\rebuild.cmd) { cmd /c android\rebuild.cmd --build config }
+          elseif (Test-Path android\rebuild.bat) { cmd /c android\rebuild.bat --build config }
+          elseif (Test-Path android\rebuild.sh) { bash android/rebuild.sh --build config }
+          else { Write-Output 'NO-REBUILD-WRAPPER-FOUND'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
