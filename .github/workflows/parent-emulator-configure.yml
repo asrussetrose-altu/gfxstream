@@ -21,6 +21,20 @@ name: Parent emulator DLL - Stage 1 configure only
 # and (c) reports VS-DISCOVERY-BLOCKED with exit 1 when the
 # task list fails on VS discovery, instead of masking it as
 # NO-CONFIGURE-TASK-FOUND.
+# REVISION 2026-10-30 (run 41108179796): the diagnosis step
+# PROVED the cause. vswhere -all AND -requires NativeDesktop
+# both return VS Enterprise 2022 17.14.37824.6, yet aemu
+# discovery prints "Discovered: []" and fails for version
+# '[16, 17)'. That range is >=16 and <17, i.e. VS2019 ONLY:
+# the installed VS2022 17.x is outside it, so discovery finds
+# nothing even though NativeDesktop is present. This revision
+# therefore (a) prints the full VS-discovery code in
+# environment.py and the vswhere JSON counts for the [16,17)
+# and [17,18) ranges, and (b) installs VS2019 Build Tools
+# with the NativeDesktop workload when no VS2019 instance is
+# found, then re-checks vswhere, before any --task-list call.
+# If the VS2019 install fails, the job fails loudly there
+# instead of later as VS-DISCOVERY-BLOCKED.
 # Target labelling (unchanged): emu-master-dev is a moving
 # branch, NOT a 37.2.12 pin. Any later DLL from this tree is
 # "parent-built, export-compared, user-tested on 37.2.12",
@@ -85,6 +99,35 @@ jobs:
           Write-Output '--- discovery code in cmake.py tree ---'
           Set-Location C:\emu-master-dev\external\qemu
           Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'native desktop|Discovered|vswhere|VisualStudio' | Select-Object -First 40 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+      - name: Print VS discovery code and version-range counts
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- environment.py VS section ---'
+          Get-Content android\build\python\aemu\process\environment.py -ErrorAction SilentlyContinue | Select-Object -First 160
+          Write-Output '--- where visual_studio_version comes from ---'
+          Select-String -Path android\build\python\cmake.py -Pattern 'visual_studio_version|VisualStudio' -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          foreach ($range in @('[16,17)', '[17,18)')) {
+            $out = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version $range -format json 2>&1 | Out-String
+            Write-Output "vswhere range $range bytes=$($out.Length) head=$($out.Substring(0, [Math]::Min(200, $out.Length)))"
+          }
+      - name: Install VS2019 Build Tools if no VS2019 found
+        shell: pwsh
+        timeout-minutes: 120
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $found = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+          if ($found -match 'installationPath') { Write-Output 'VS2019-ALREADY-PRESENT'; exit 0 }
+          Write-Output 'No VS2019 instance found; installing VS2019 Build Tools (NativeDesktop workload).'
+          $exe = "$env:TEMP\vs_BuildTools2019.exe"
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/16/release/vs_BuildTools.exe' -OutFile $exe
+          & $exe --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --passive --wait --norestart
+          Write-Output "Installer exit code: $LASTEXITCODE"
+          $found2 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+          Write-Output "After install, VS2019 vswhere bytes=$($found2.Length)"
+          if (-not ($found2 -match 'installationPath')) { Write-Output 'VS2019-INSTALL-FAILED'; exit 1 }
+          Write-Output 'VS2019-INSTALLED'
       - name: Show rebuild entry point and help
         shell: pwsh
         run: |
