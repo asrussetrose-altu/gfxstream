@@ -107,6 +107,8 @@ jobs:
           Get-Content android\build\python\aemu\process\environment.py -ErrorAction SilentlyContinue | Select-Object -First 160
           Write-Output '--- where visual_studio_version comes from ---'
           Select-String -Path android\build\python\cmake.py -Pattern 'visual_studio_version|VisualStudio' -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- caller of get_default_environment / 16, 17 in whole build tree ---'
+          Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'get_default_environment|16, 17|16,17' | Select-Object -First 30 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           foreach ($range in @('[16,17)', '[17,18)')) {
             $out = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version $range -format json 2>&1 | Out-String
@@ -122,11 +124,23 @@ jobs:
           Write-Output 'No VS2019 instance found; installing VS2019 Build Tools (NativeDesktop workload).'
           $exe = "$env:TEMP\vs_BuildTools2019.exe"
           Invoke-WebRequest -Uri 'https://aka.ms/vs/16/release/vs_BuildTools.exe' -OutFile $exe
-          & $exe --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --passive --wait --norestart
-          Write-Output "Installer exit code: $LASTEXITCODE"
+          Write-Output "Bootstrapper bytes: $((Get-Item $exe).Length)"
+          # Previous attempt (run 41109450340) exited 0 in <1s with no
+          # install: use --quiet plus a log file, and keep the log tail
+          # in the job log for diagnosis if it still does nothing.
+          & $exe --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart --log "$env:TEMP\vs2019-install.log"
+          Write-Output "Bootstrapper exit code: $LASTEXITCODE"
+          if (Test-Path "$env:TEMP\vs2019-install.log") { Get-Content "$env:TEMP\vs2019-install.log" -Tail 30 }
           $found2 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
-          Write-Output "After install, VS2019 vswhere bytes=$($found2.Length)"
-          if (-not ($found2 -match 'installationPath')) { Write-Output 'VS2019-INSTALL-FAILED'; exit 1 }
+          Write-Output "After bootstrapper, VS2019 vswhere bytes=$($found2.Length)"
+          if (-not ($found2 -match 'installationPath')) {
+            Write-Output 'Bootstrapper produced no VS2019; falling back to Chocolatey visualstudio2019buildtools.'
+            choco install visualstudio2019buildtools -y --no-progress --params "'/Add Microsoft.VisualStudio.Workload.NativeDesktop /IncludeRecommended'" 2>&1 | Select-Object -Last 30
+            Write-Output "Choco exit code: $LASTEXITCODE"
+            $found3 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+            Write-Output "After choco, VS2019 vswhere bytes=$($found3.Length)"
+            if (-not ($found3 -match 'installationPath')) { Write-Output 'VS2019-INSTALL-FAILED'; exit 1 }
+          }
           Write-Output 'VS2019-INSTALLED'
       - name: Show rebuild entry point and help
         shell: pwsh
