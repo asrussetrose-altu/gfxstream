@@ -133,6 +133,36 @@ name: Parent emulator DLL - Stage 1 configure only
 # evidence for attempt 7 (patch the resolver to system cmake,
 # or sync the exact prebuilt path it reads).
 
+# REVISION 2026-10-31 (run 41116846874, main 20ae9ea): fix
+# attempt 6 FAILED at step 15 Configure with the SAME None
+# error, but its step 14 dump + the synced revision's own
+# source settled the root cause exactly. aemu/tasks/
+# configure.py (qemu ae9d18d, fetched from the AOSP mirror at
+# that SHA) resolves cmake as:
+#   cmake = shutil.which("cmake", path=str(aosp / "prebuilts"
+#     / "cmake" / f"{platform.system().lower()}-x86" / "bin"))
+# shutil.which with an explicit path= searches ONLY that
+# directory and ignores PATH entirely — so attempts 5 and 6
+# prepending system cmake to PATH could never work. Attempt 6
+# also checked the WRONG project: prebuilts/android-
+# emulator-build (only the sccache location, unused with
+# --ccache none), not prebuilts/cmake; and its repo list
+# greps printed nothing at all, so the manifest question is
+# still open. This revision therefore (1) stages the runner's
+# own system cmake into the exact path the resolver reads:
+# prebuilts/cmake/windows-x86/bin/cmake.exe plus its share/
+# tree (cmake locates Modules relative to the exe), and
+# verifies with the identical shutil.which call before
+# running Configure; (2) still prints raw repo list output
+# (first 30 lines) for the record, and tries a guarded
+# repo sync of prebuilts/cmake ONLY if repo list actually
+# lists it — staging remains the primary fix either way.
+# Staging is a build-environment workaround for Stage 1
+# configure-only, not a code change; the full-build stage
+# should prefer the real prebuilt cmake if it syncs.
+# If Configure still fails, the next failure (e.g. ninja)
+# is the new evidence for attempt 8.
+
 on:
   workflow_dispatch:
 
@@ -350,15 +380,32 @@ jobs:
             else { Write-Output 'CHOCO-CMAKE-NOT-FOUND: configure will still run so its log shows the None resolver.' }
           }
           if ($cmakeDir) { $env:Path = "$cmakeDir;$env:Path"; Write-Output "PATH-PREPEND-CMAKE: $cmakeDir" }
-          Write-Output '--- attempt 6: prebuilt cmake recovery (only if in manifest) ---'
+          Write-Output '--- attempt 7: stage system cmake at the exact path the resolver reads ---'
+          Write-Output 'Resolver (aemu/tasks/configure.py, qemu ae9d18d): shutil.which("cmake", path=aosp/prebuilts/cmake/windows-x86/bin) — PATH is ignored.'
           Set-Location C:\emu-master-dev
-          $inManifest = repo list 2>$null | Select-String -Pattern 'prebuilts/android-emulator-build'
-          if ($inManifest) {
-            Write-Output "prebuilt project in manifest: $inManifest"
-            repo sync -j 4 prebuilts/android-emulator-build 2>&1 | Select-Object -Last 15
-            Write-Output "prebuilts exists after sync: $(Test-Path C:\emu-master-dev\prebuilts)"
-            Get-ChildItem C:\emu-master-dev\prebuilts -Filter cmake.exe -Recurse -Depth 5 -ErrorAction SilentlyContinue | Select-Object -First 5 FullName
-          } else { Write-Output 'PREBUILT-PROJECT-NOT-IN-MANIFEST: skipping sync; resolver patch is attempt 7.' }
+          Write-Output '--- repo list (raw, first 30 lines; attempt 6 greps printed nothing) ---'
+          repo list 2>&1 | Select-Object -First 30
+          $listed = repo list 2>$null | Select-String -Pattern 'prebuilts/cmake' -SimpleMatch:$false
+          if ($listed) {
+            Write-Output "prebuilts/cmake IS in manifest; syncing it (preferred over staging): $listed"
+            repo sync -j 4 prebuilts/cmake 2>&1 | Select-Object -Last 15
+          } else { Write-Output 'prebuilts/cmake not confirmed in repo list output; proceeding to staging.' }
+          $destBin = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin'
+          $destShare = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\share'
+          if (-not (Test-Path "$destBin\cmake.exe")) {
+            $sysCmake = where.exe cmake 2>$null | Select-Object -First 1
+            if (-not $sysCmake) { Write-Output 'NO-SYSTEM-CMAKE-TO-STAGE'; exit 1 }
+            $sysDir = Split-Path $sysCmake -Parent
+            New-Item -ItemType Directory -Force -Path $destBin | Out-Null
+            Copy-Item "$sysDir\*" $destBin -Recurse -Force
+            $sysShare = Join-Path (Split-Path $sysDir -Parent) 'share'
+            if (Test-Path $sysShare) { New-Item -ItemType Directory -Force -Path $destShare | Out-Null; Copy-Item "$sysShare\*" $destShare -Recurse -Force }
+            Write-Output "STAGED-CMAKE-FROM: $sysCmake -> $destBin"
+          } else { Write-Output "PREBUILT-CMAKE-ALREADY-PRESENT: $destBin\cmake.exe" }
+          & "$destBin\cmake.exe" --version 2>&1 | Select-Object -First 2
+          python -c "import shutil; print('RESOLVER-PROBE:', shutil.which('cmake', path=r'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin'))"
+          Write-Output '--- ninja on PATH (cmake -G Ninja will need it next) ---'
+          where.exe ninja 2>&1 | Select-Object -First 3
           Set-Location C:\emu-master-dev\external\qemu
           $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
           Write-Output $list
