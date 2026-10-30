@@ -88,6 +88,26 @@ name: Parent emulator DLL - Stage 1 configure only
 # never "the 37.2.12 DLL rebuilt from source".
 # Gate stays OFF: translatorSupportsGLES32() returns false.
 
+# REVISION 2026-10-31 (run 41113776450, main c2f12a6): fix
+# attempt 4 PROVED the VS fix: the [17,18) toolchains.json
+# override worked — aemu discovered VS2022 Enterprise 17.14
+# and the Configure task actually RAN. It then failed on a NEW
+# error, not VS: "Run: None -B...objs ... in None" /
+# "'None' is not recognized as an internal or external
+# command" — the cmake executable resolved to Python None.
+# This revision therefore (1) adds a cmake-diagnosis step
+# BEFORE Configure that prints where.exe cmake, cmake
+# --version, the PATH seen by the step, the cmake-executable
+# resolution code in cmake.py / aemu/prebuilts/deps/windows.py,
+# and any prebuilt cmake.exe under the synced tree, so the
+# next fix targets the real resolver instead of guessing; and
+# (2) makes Configure first put a found system cmake on PATH
+# for its cmd subprocess, and choco-installs cmake if none is
+# found at all, then re-runs the configure task. If configure
+# still fails with None, the diagnosis output is the evidence
+# for attempt 6 (e.g. a prebuilt-cmake path the partial sync
+# omitted).
+
 on:
   workflow_dispatch:
 
@@ -252,11 +272,41 @@ jobs:
           $py = Get-ChildItem android -Filter cmake.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           Write-Output "cmake.py: $py"
           if ($py) { Select-String -Path $py -Pattern 'task' | Select-Object -First 60 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } }
+      - name: Diagnose cmake executable (run 41113776450 resolved it to None)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- where cmake / version ---'
+          where.exe cmake 2>&1 | Select-Object -First 5
+          if (Get-Command cmake -ErrorAction SilentlyContinue) { cmake --version 2>&1 | Select-Object -First 2 }
+          else { Write-Output 'NO-SYSTEM-CMAKE-ON-PATH' }
+          Write-Output '--- PATH entries (first 20) ---'
+          ($env:Path -split ';') | Select-Object -First 20
+          Write-Output '--- cmake.py: how the cmake executable is resolved ---'
+          $py = Get-ChildItem android -Filter cmake.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          Write-Output "cmake.py: $py"
+          if ($py) { Select-String -Path $py -Pattern 'which|shutil|prebuilt|cmake.*exe|get_cmake|CMAKE' | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } }
+          Write-Output '--- aemu prebuilts deps (windows) ---'
+          Get-Content android\build\python\aemu\prebuilts\deps\windows.py -ErrorAction SilentlyContinue | Select-Object -First 120
+          Write-Output '--- prebuilt cmake candidates under synced tree ---'
+          Get-ChildItem C:\emu-master-dev -Filter cmake.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 10 FullName
+          Get-ChildItem android\build\cmake -ErrorAction SilentlyContinue | Select-Object Name
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
         run: |
           Set-Location C:\emu-master-dev\external\qemu
+          $cmakeDir = $null
+          $found = where.exe cmake 2>$null | Select-Object -First 1
+          if ($found) { $cmakeDir = Split-Path $found -Parent; Write-Output "SYSTEM-CMAKE: $found" }
+          else {
+            Write-Output 'No system cmake; installing via Chocolatey (fallback only).'
+            choco install cmake -y --no-progress 2>&1 | Select-Object -Last 10
+            $found = where.exe cmake 2>$null | Select-Object -First 1
+            if ($found) { $cmakeDir = Split-Path $found -Parent; Write-Output "CHOCO-CMAKE: $found" }
+            else { Write-Output 'CHOCO-CMAKE-NOT-FOUND: configure will still run so its log shows the None resolver.' }
+          }
+          if ($cmakeDir) { $env:Path = "$cmakeDir;$env:Path"; Write-Output "PATH-PREPEND-CMAKE: $cmakeDir" }
           $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
           Write-Output $list
           if ($list -match 'No visual studio') { Write-Output 'VS-DISCOVERY-BLOCKED'; exit 1 }
