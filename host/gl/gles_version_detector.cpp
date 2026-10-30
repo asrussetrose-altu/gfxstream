@@ -105,33 +105,29 @@ static bool sTryContextCreation(EGLDisplay dpy, GLESDispatchMaxVersion ver) {
 
 GLESDispatchMaxVersion calcMaxVersionFromDispatch(const gfxstream::host::FeatureSet& features,
                                                   EGLDisplay dpy) {
-    // Start at the highest version supported by the shared dispatch enum;
-    // the EGL backend query or context-creation probes below must confirm it.
-    GLESDispatchMaxVersion maxVersion =
-       GLES_DISPATCH_MAX_VERSION_3_2;
+    const auto renderer = get_gfxstream_renderer();
+    const bool usesEglMaxVersionQuery =
+        renderer == SELECTED_RENDERER_HOST ||
+        renderer == SELECTED_RENDERER_SWIFTSHADER_INDIRECT ||
+        renderer == SELECTED_RENDERER_LAVAPIPE ||
+        renderer == SELECTED_RENDERER_ANGLE_INDIRECT;
 
-    if (get_gfxstream_renderer() == SELECTED_RENDERER_HOST
-        || get_gfxstream_renderer() == SELECTED_RENDERER_SWIFTSHADER_INDIRECT
-        || get_gfxstream_renderer() == SELECTED_RENDERER_LAVAPIPE
-        || get_gfxstream_renderer() == SELECTED_RENDERER_ANGLE_INDIRECT) {
-        if (s_egl.eglGetMaxGLESVersion) {
-            maxVersion =
-                (GLESDispatchMaxVersion)s_egl.eglGetMaxGLESVersion(dpy);
-        }
-    } else {
-        if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
-            maxVersion = GLES_DISPATCH_MAX_VERSION_3_1;
-        }
-        if (maxVersion == GLES_DISPATCH_MAX_VERSION_3_1 &&
-            !sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
-            maxVersion = GLES_DISPATCH_MAX_VERSION_3_0;
-            if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_0)) {
-                maxVersion = GLES_DISPATCH_MAX_VERSION_2;
-            }
-        }
+    if (usesEglMaxVersionQuery && s_egl.eglGetMaxGLESVersion) {
+        return static_cast<GLESDispatchMaxVersion>(s_egl.eglGetMaxGLESVersion(dpy));
     }
 
-    return maxVersion;
+    // Probe from highest to lowest. Never advertise a version solely because
+    // it exists in the enum: the backend must successfully create that context.
+    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
+        return GLES_DISPATCH_MAX_VERSION_3_2;
+    }
+    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
+        return GLES_DISPATCH_MAX_VERSION_3_1;
+    }
+    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_0)) {
+        return GLES_DISPATCH_MAX_VERSION_3_0;
+    }
+    return GLES_DISPATCH_MAX_VERSION_2;
 }
 
 // For determining whether or not to use core profile OpenGL.
