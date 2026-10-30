@@ -35,6 +35,26 @@ name: Parent emulator DLL - Stage 1 configure only
 # found, then re-checks vswhere, before any --task-list call.
 # If the VS2019 install fails, the job fails loudly there
 # instead of later as VS-DISCOVERY-BLOCKED.
+# REVISION 2026-10-30 (run 41109966366, main d4c3d88): fix
+# attempt 2 failed on BOTH install paths. (a) The VS2019
+# bootstrapper (aka.ms/vs/16/release/vs_BuildTools.exe,
+# 4,422,824 bytes) exits 0 in ~30ms and creates NO
+# vs2019-install.log: it never starts the installer engine.
+# (b) The Chocolatey fallback fails with installer exit 87:
+# "Option '/Add' is unknown. Usage: setup.exe install
+# [options]" — the slash-form params were passed verbatim to
+# setup.exe, which only accepts the double-dash form. (c) The
+# caller grep PROVED an override exists that avoids VS2019
+# entirely: aemu/platform/toolchains.py:150 returns
+# self.versions.get("visual_studio_version", "[16, 17)"), i.e.
+# the range comes from a toolchain config, defaulting to
+# VS2019-only. This revision therefore (1) tries the override
+# FIRST: locate the toolchain config, set
+# visual_studio_version to "[17, 18)", and probe --task-list;
+# on success the VS2019 install step is skipped via a marker
+# file; (2) fixes the choco params to the double-dash form
+# (--add ... --includeRecommended); (3) adds a %TEMP%
+# dd_*.log diagnostic after a no-op bootstrapper run.
 # Target labelling (unchanged): emu-master-dev is a moving
 # branch, NOT a 37.2.12 pin. Any later DLL from this tree is
 # "parent-built, export-compared, user-tested on 37.2.12",
@@ -114,10 +134,37 @@ jobs:
             $out = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version $range -format json 2>&1 | Out-String
             Write-Output "vswhere range $range bytes=$($out.Length) head=$($out.Substring(0, [Math]::Min(200, $out.Length)))"
           }
+      - name: Try VS2022 via toolchain visual_studio_version override
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- toolchain config search ---'
+          Get-ChildItem android -Filter toolchain.json -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+          Get-ChildItem android -Filter *.json -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'visual_studio_version' | Select-Object -First 20 | ForEach-Object { "$($_.Path): $($_.Line.Trim())" }
+          Write-Output '--- toolchains.py versions loader ---'
+          Get-Content android\build\python\aemu\platform\toolchains.py -ErrorAction SilentlyContinue | Select-Object -First 160
+          $cfg = Get-ChildItem android -Filter toolchain.json -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $cfg) { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAIN-JSON'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Write-Output "toolchain config: $cfg"
+          $raw = Get-Content $cfg -Raw
+          if ($raw -notmatch 'visual_studio_version') { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-KEY'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Copy-Item $cfg "$cfg.bak" -Force
+          $patched = $raw -replace '"visual_studio_version"\s*:\s*"[^"]*"', '"visual_studio_version": "[17, 18)"'
+          if ($patched -eq $raw) { Write-Output 'OVERRIDE-PATCH-NOOP'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Set-Content $cfg $patched -NoNewline
+          Write-Output 'Patched visual_studio_version to [17, 18); probing --task-list:'
+          $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
+          Write-Output $list
+          if ($list -match 'No visual studio') { Write-Output 'OVERRIDE-PROBE-FAILED'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Write-Output 'OVERRIDE-PROBE-OK-VS2022-DISCOVERY-PASSED'; 'OK' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"
       - name: Install VS2019 Build Tools if no VS2019 found
         shell: pwsh
         timeout-minutes: 120
         run: |
+          if (Test-Path "$env:TEMP\vs-override.txt") {
+            $marker = (Get-Content "$env:TEMP\vs-override.txt" -Raw).Trim()
+            if ($marker -eq 'OK') { Write-Output 'SKIPPING-VS2019-INSTALL-OVERRIDE-OK'; exit 0 }
+          }
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $found = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
           if ($found -match 'installationPath') { Write-Output 'VS2019-ALREADY-PRESENT'; exit 0 }
@@ -131,11 +178,17 @@ jobs:
           & $exe --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart --log "$env:TEMP\vs2019-install.log"
           Write-Output "Bootstrapper exit code: $LASTEXITCODE"
           if (Test-Path "$env:TEMP\vs2019-install.log") { Get-Content "$env:TEMP\vs2019-install.log" -Tail 30 }
+          else {
+            Write-Output 'No vs2019-install.log; newest VS installer dd_*.log in %TEMP%:'
+            Get-ChildItem $env:TEMP -Filter dd_*.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name, Length | ForEach-Object { Write-Output "$($_.Name) $($_.Length)"; Get-Content "$env:TEMP\$($_.Name)" -Tail 15 -ErrorAction SilentlyContinue }
+          }
           $found2 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
           Write-Output "After bootstrapper, VS2019 vswhere bytes=$($found2.Length)"
           if (-not ($found2 -match 'installationPath')) {
             Write-Output 'Bootstrapper produced no VS2019; falling back to Chocolatey visualstudio2019buildtools.'
-            choco install visualstudio2019buildtools -y --no-progress --params "'/Add Microsoft.VisualStudio.Workload.NativeDesktop /IncludeRecommended'" 2>&1 | Select-Object -Last 30
+            # Run 41109966366 proved the slash form fails (setup.exe
+            # exit 87: Option /Add unknown); use double-dash form.
+            choco install visualstudio2019buildtools -y --no-progress --params "'--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended'" 2>&1 | Select-Object -Last 30
             Write-Output "Choco exit code: $LASTEXITCODE"
             $found3 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
             Write-Output "After choco, VS2019 vswhere bytes=$($found3.Length)"
