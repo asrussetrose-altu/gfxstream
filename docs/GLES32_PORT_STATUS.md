@@ -208,3 +208,22 @@ enable yet. Before changing runtime negotiation, the translator needs a
 consistent 3.2 interface, context, dispatch, cache, and capability path, and
 the exact host backend must pass the GLES 3.2 CTS/dEQP coverage relevant to
 the features it advertises.
+
+
+## GLES 3.2 API-surface coverage check (2026-10-30)
+
+The generated `gles32_only.entries` list is only six KHR_debug-style
+functions: debug message control/insert/callback/log and debug group push/pop.
+This explains why generated 3.2 headers are present despite the translator
+being capped at 3.1.
+
+That six-function list is not the complete GLES 3.2 feature set. GLES 3.2
+also makes additional functionality core that historically arrived through
+extensions, notably geometry shaders and tessellation shaders, as well as
+other promoted functionality. The inspected GLES 3.0, 3.1 and 3.x extension
+entry lists do not show a complete, explicit geometry/tessellation API
+dispatch implementation. Therefore, we cannot infer GLES 3.2 conformance
+from the presence of the six generated debug functions. A proper coverage
+matrix must map every GLES 3.2 core feature to either a translator core
+implementation or a tested extension implementation before version 3.2 is
+advertised.
