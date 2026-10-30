@@ -41,7 +41,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path C:\emu-master-dev | Out-Null
           Set-Location C:\emu-master-dev
           repo init -u https://android.googlesource.com/platform/manifest -b emu-master-dev --depth=1
-          repo sync -j 8 external/qemu hardware/google/gfxstream hardware/google/aemu prebuilts/android-emulator-build
+          repo sync -j 8 external/qemu hardware/google/gfxstream hardware/google/aemu
           Get-ChildItem C:\emu-master-dev | Select-Object Name
           Get-PSDrive C | Select-Object Used, Free
       - name: Record synced HEAD SHAs
