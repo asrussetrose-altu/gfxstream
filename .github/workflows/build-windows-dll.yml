@@ -23,26 +23,26 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_C_COMPILER=clang-cl ^
             -DCMAKE_CXX_COMPILER=clang-cl ^
-            -DCMAKE_CXX_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX" ^
-            -DCMAKE_C_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX"
+            -DCMAKE_CXX_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX /Wno-everything" ^
+            -DCMAKE_C_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX /Wno-everything"
 
       - name: Build
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           cd build
-          ninja gfxstream_backend
+          ninja -k 0 gfxstream_backend
 
       - name: Collect DLLs
         shell: bash
         run: |
           mkdir -p artifact
-          find build -name "*gfxstream_backend*.dll" -exec cp {} artifact/ \; || true
+          find build -name "*gfxstream*.dll" -exec cp {} artifact/ \; || true
           find build -name "*.dll" -exec cp {} artifact/ \; || true
           echo "=== DLLs found ==="
           ls -la artifact/ || true
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: libgfxstream_backend-windows
