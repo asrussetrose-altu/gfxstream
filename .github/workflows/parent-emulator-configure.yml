@@ -1,5 +1,29 @@
 name: Parent emulator DLL - Stage 1 configure only
 
+# REVISION attempt 10 (run 41134318019, main f6bfda2, FAILED at step 16
+# in ~4s): attempt 9 PROVED the manifest question, not just a sync
+# hiccup. Full repo list showed only 5 projects (external/qemu,
+# hardware/google/aemu, hardware/google/gfxstream,
+# prebuilts/clang/host/windows-x86, prebuilts/cmake/windows-x86)
+# and NO android-emulator line, and `repo sync
+# prebuilts/android-emulator-build` failed with "error: project
+# prebuilts/android-emulator-build not found". So that path is not
+# a project in the emu-master-dev manifest as repo sees it, and
+# retrying the same path sync cannot work. This revision therefore
+# (1) dumps manifest evidence (.repo/manifests/default.xml greps
+# for android-emulator/prebuilts, plus .repo/manifest.xml),
+# (2) prints prebuilts.cmake around line 119 and every
+# qemu-android-deps reference in the qemu tree, (3) tries repo
+# sync by project NAME platform/prebuilts/android-emulator-build
+# (name vs path lookup can differ), and (4) if pixman is still
+# absent, shallow-clones platform/prebuilts/android-emulator-build
+# from android.googlesource.com (emu-master-dev branch first,
+# default branch fallback) directly into
+# prebuilts/android-emulator-build, then verifies the exact
+# pixman include dir Configure needs. If the clone also fails,
+# the step fails loudly WITH the manifest + cmake evidence, so
+# attempt 11 does not guess again. If pixman appears, Configure
+# runs and its next failure (if any) is the new evidence.
 # REVISION attempt 9 (run 41132454021, main 7d4addb, FAILED at step 16
 # Configure after 17s): attempt 8 was a big step forward — clang-cl
 # (Clang 19.0.0, MSVC-like) and prebuilt cmake 3.23.1 both WORKED,
@@ -425,24 +449,38 @@ jobs:
           Write-Output "PREBUILT-CMAKE-EXISTS: $(Test-Path $cmake) ($cmake)"
           if (Test-Path $cmake) { & $cmake --version 2>&1 | Select-Object -First 1 }
           Get-PSDrive C | Select-Object Used, Free
-      - name: Sync qemu-android-deps prebuilt (attempt 9)
+      - name: Sync qemu-android-deps prebuilt (attempt 10)
         shell: pwsh
         run: |
           Set-Location C:\emu-master-dev
-          Write-Output '--- attempt 9: full repo list (attempt 8 truncated to 30 lines) ---'
-          repo list 2>&1 | Tee-Object -Variable allList | Select-Object -First 100
-          Write-Output '--- android-emulator lines in repo list ---'
-          $allList | Select-String -Pattern 'android-emulator' | Select-Object -First 20
-          Write-Output '--- explicit path sync of prebuilts/android-emulator-build ---'
-          repo sync -j 4 prebuilts/android-emulator-build 2>&1 | Select-Object -Last 20
-          Write-Output "repo sync exit code: $LASTEXITCODE"
+          Write-Output '--- attempt 10: manifest evidence (attempt 9 proved path sync fails: project not found) ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'android-emulator|prebuilts' | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML'; Get-ChildItem .repo\manifests -ErrorAction SilentlyContinue | Select-Object Name }
+          if (Test-Path .repo\manifest.xml) { Get-Content .repo\manifest.xml }
+          Write-Output '--- prebuilts.cmake PIXMAN section (lines ~91-160) ---'
+          Get-Content external\qemu\android\build\cmake\prebuilts.cmake -ErrorAction SilentlyContinue | Select-Object -First 160 | Select-Object -Skip 90
+          Write-Output '--- qemu-android-deps references in qemu tree ---'
+          Get-ChildItem external\qemu\android -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'qemu-android-deps' | Select-Object -First 20 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- try repo sync by project NAME (path form failed in attempt 9) ---'
+          repo sync -j 4 platform/prebuilts/android-emulator-build 2>&1 | Select-Object -Last 10
+          Write-Output "repo sync by name exit code: $LASTEXITCODE"
           $pixman = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64\include\pixman-1'
+          if (-not (Test-Path $pixman)) {
+            Write-Output '--- fallback: shallow git clone of platform/prebuilts/android-emulator-build ---'
+            New-Item -ItemType Directory -Force -Path C:\emu-master-dev\prebuilts | Out-Null
+            git clone --depth 1 -b emu-master-dev https://android.googlesource.com/platform/prebuilts/android-emulator-build C:\emu-master-dev\prebuilts\android-emulator-build 2>&1 | Select-Object -Last 10
+            Write-Output "git clone emu-master-dev exit code: $LASTEXITCODE"
+            if (-not (Test-Path $pixman)) {
+              Remove-Item -Recurse -Force C:\emu-master-dev\prebuilts\android-emulator-build -ErrorAction SilentlyContinue
+              git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build C:\emu-master-dev\prebuilts\android-emulator-build 2>&1 | Select-Object -Last 10
+              Write-Output "git clone default-branch exit code: $LASTEXITCODE"
+            }
+          }
           Write-Output "PIXMAN-INCLUDE-EXISTS: $(Test-Path $pixman) ($pixman)"
           if (Test-Path $pixman) { Get-ChildItem $pixman | Select-Object -First 5 Name }
           $depsRoot = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64'
           Write-Output "QEMU-ANDROID-DEPS-ROOT-EXISTS: $(Test-Path $depsRoot)"
           if (Test-Path $depsRoot) { Get-ChildItem $depsRoot | Select-Object -First 20 Name }
-          if (-not (Test-Path $pixman)) { Write-Output 'QEMU-ANDROID-DEPS-MISSING: pixman include dir absent after sync attempt; Configure would fail at prebuilts.cmake:119. See repo list above for whether the project is in the manifest.'; exit 1 }
+          if (-not (Test-Path $pixman)) { Write-Output 'QEMU-ANDROID-DEPS-MISSING: pixman include dir absent after name-sync + clone attempts; Configure would fail at prebuilts.cmake:119. See manifest + cmake evidence above.'; exit 1 }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
