@@ -25,19 +25,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Configure
         shell: pwsh
         run: |
           cmake --version
-          msbuild -version
-          $vs = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\bin\clang-cl.exe' -ErrorAction SilentlyContinue
-          if (-not $vs) {
-            throw 'Visual Studio ClangCL toolset was not found on this runner.'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "Visual Studio Installer vswhere.exe was not found."
           }
-          & $vs.FullName --version
-
-      - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
+          $vsPath = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vsPath) {
+            throw "No Visual Studio 2022 installation was detected."
+          }
+          Write-Host "Visual Studio: $vsPath"
+          $clang = Get-ChildItem -Path (Join-Path $vsPath 'VC\Tools\Llvm\bin') -Filter 'clang-cl.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $clang) {
+            throw "The Visual Studio ClangCL toolset is missing from $vsPath."
+          }
+          & $clang.FullName --version
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
 
       - name: Build backend
         run: cmake --build build --config Release --target gfxstream_backend --parallel
