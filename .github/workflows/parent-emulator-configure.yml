@@ -1,5 +1,32 @@
 name: Parent emulator DLL - Stage 1 configure only
 
+# REVISION attempt 9 (run 41132454021, main 7d4addb, FAILED at step 16
+# Configure after 17s): attempt 8 was a big step forward — clang-cl
+# (Clang 19.0.0, MSVC-like) and prebuilt cmake 3.23.1 both WORKED,
+# compiler detection passed, and Configure ran real cmake. The NEW
+# failure is CMake Error at android/build/cmake/prebuilts.cmake:119:
+# "The include directory C:/emu-master-dev/prebuilts/
+# android-emulator-build/qemu-android-deps/windows_msvc-x86_64/
+# include/pixman-1 of PIXMAN does not exist." The partial sync
+# never fetched prebuilts/android-emulator-build, so the whole
+# qemu-android-deps tree is absent. Attempt 6 checked this project
+# but its repo-list greps printed nothing and it was skipped, so
+# the manifest question is still open. This revision therefore
+# adds a step BEFORE Configure that (1) prints the FULL repo list
+# (attempt 8 truncated it to 30 lines) and greps for
+# android-emulator, (2) tries an explicit path sync of
+# prebuilts/android-emulator-build (explicit path sync bypassed
+# group filtering for clang/cmake in attempt 8, so it is the
+# right first try here too), capturing the exit code, and (3)
+# verifies the exact pixman include dir Configure needs, failing
+# loudly as QEMU-ANDROID-DEPS-MISSING with the repo-list evidence
+# if it is still absent after the sync attempt. It also drops the
+# stale "repo sync prebuilts/cmake" block in the Configure step,
+# which only ever printed "error: project prebuilts/cmake not
+# found" (the real path is prebuilts/cmake/windows-x86, already
+# synced by the attempt-8 step). If Configure next fails on a
+# different missing prebuilt, that path is the evidence for
+# attempt 10, same pattern.
 # REVISION attempt 8 (run 41118424422 failed at Configure):
 # attempt 7 PROVED the cmake staging: RESOLVER-PROBE found the
 # staged cmake, Configure actually ran cmake (not None), and
@@ -398,6 +425,25 @@ jobs:
           Write-Output "PREBUILT-CMAKE-EXISTS: $(Test-Path $cmake) ($cmake)"
           if (Test-Path $cmake) { & $cmake --version 2>&1 | Select-Object -First 1 }
           Get-PSDrive C | Select-Object Used, Free
+      - name: Sync qemu-android-deps prebuilt (attempt 9)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 9: full repo list (attempt 8 truncated to 30 lines) ---'
+          repo list 2>&1 | Tee-Object -Variable allList | Select-Object -First 100
+          Write-Output '--- android-emulator lines in repo list ---'
+          $allList | Select-String -Pattern 'android-emulator' | Select-Object -First 20
+          Write-Output '--- explicit path sync of prebuilts/android-emulator-build ---'
+          repo sync -j 4 prebuilts/android-emulator-build 2>&1 | Select-Object -Last 20
+          Write-Output "repo sync exit code: $LASTEXITCODE"
+          $pixman = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64\include\pixman-1'
+          Write-Output "PIXMAN-INCLUDE-EXISTS: $(Test-Path $pixman) ($pixman)"
+          if (Test-Path $pixman) { Get-ChildItem $pixman | Select-Object -First 5 Name }
+          $depsRoot = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64'
+          Write-Output "QEMU-ANDROID-DEPS-ROOT-EXISTS: $(Test-Path $depsRoot)"
+          if (Test-Path $depsRoot) { Get-ChildItem $depsRoot | Select-Object -First 20 Name }
+          if (-not (Test-Path $pixman)) { Write-Output 'QEMU-ANDROID-DEPS-MISSING: pixman include dir absent after sync attempt; Configure would fail at prebuilts.cmake:119. See repo list above for whether the project is in the manifest.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
@@ -416,14 +462,7 @@ jobs:
           if ($cmakeDir) { $env:Path = "$cmakeDir;$env:Path"; Write-Output "PATH-PREPEND-CMAKE: $cmakeDir" }
           Write-Output '--- attempt 7: stage system cmake at the exact path the resolver reads ---'
           Write-Output 'Resolver (aemu/tasks/configure.py, qemu ae9d18d): shutil.which("cmake", path=aosp/prebuilts/cmake/windows-x86/bin) — PATH is ignored.'
-          Set-Location C:\emu-master-dev
-          Write-Output '--- repo list (raw, first 30 lines; attempt 6 greps printed nothing) ---'
-          repo list 2>&1 | Select-Object -First 30
-          $listed = repo list 2>$null | Select-String -Pattern 'prebuilts/cmake' -SimpleMatch:$false
-          if ($listed) {
-            Write-Output "prebuilts/cmake IS in manifest; syncing it (preferred over staging): $listed"
-            repo sync -j 4 prebuilts/cmake 2>&1 | Select-Object -Last 15
-          } else { Write-Output 'prebuilts/cmake not confirmed in repo list output; proceeding to staging.' }
+          Write-Output 'Note (attempt 9): the stale repo sync of bare prebuilts/cmake was removed; it only printed "project prebuilts/cmake not found". The real path prebuilts/cmake/windows-x86 is synced by the attempt-8 step.'
           $destBin = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin'
           $destShare = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\share'
           if (-not (Test-Path "$destBin\cmake.exe")) {
