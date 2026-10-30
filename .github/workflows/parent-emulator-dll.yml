@@ -1,0 +1,53 @@
+name: Parent emulator DLL - Stage 0 dry sync check
+
+# Manual only. Never on push, to avoid burning a 6-hour sync on every commit.
+# Stage 0 only: repo init + partial sync of the parent tree, then report
+# disk used and time taken, and stop. No build, no DLL, no install.
+# If Stage 0 already exceeds disk/time on a standard runner, do NOT proceed
+# to a full build on that runner (larger runner or self-hosted is the next step).
+# Target: Emulator 37.2.12 is NOT pinned by emu-master-dev (moving branch);
+# any later build from this tree must be labelled parent-built, export-compared,
+# user-tested on 37.2.12, never 'the 37.2.12 DLL rebuilt from source'.
+# Gate stays OFF: translatorSupportsGLES32() returns false.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stage0-dry-sync:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Report free disk before sync
+        shell: pwsh
+        run: |
+          Get-PSDrive C | Select-Object Used, Free
+          Get-ComputerInfo | Select-Object TotalPhysicalMemory
+      - name: Install repo tool (Windows form, per WINDOWS-DEV.md)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\bin" | Out-Null
+          curl.exe -o "$env:USERPROFILE\bin\repo" http://storage.googleapis.com/git-repo-downloads/repo
+          "@call python %~dp0repo %* " | Out-File -Encoding ascii "$env:USERPROFILE\bin\repo.cmd"
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\bin"
+          git config --global core.autocrlf false
+          git config --global core.symlinks true
+      - name: Repo init and partial sync (Stage 0 only)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\emu-master-dev | Out-Null
+          Set-Location C:\emu-master-dev
+          repo init -u https://android.googlesource.com/platform/manifest -b emu-master-dev --depth=1
+          repo sync -j 8 external/qemu hardware/google/gfxstream hardware/google/aemu prebuilts/android-emulator-build
+          Get-ChildItem C:\emu-master-dev | Select-Object Name
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Record synced HEAD SHAs
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          git -C external/qemu rev-parse HEAD
+          git -C hardware/google/gfxstream rev-parse HEAD
+          git -C hardware/google/aemu rev-parse HEAD
