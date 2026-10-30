@@ -13,13 +13,18 @@ jobs:
       - name: Install Ninja
         run: choco install ninja -y
 
-      - name: Configure with CMake (Ninja + ClangCL)
+      - name: Configure
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           mkdir build
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+          cmake .. -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_C_COMPILER=clang-cl ^
+            -DCMAKE_CXX_COMPILER=clang-cl ^
+            -DCMAKE_CXX_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX" ^
+            -DCMAKE_C_FLAGS="/DWIN32_LEAN_AND_MEAN /D_WINSOCKAPI_ /DNOMINMAX"
 
       - name: Build
         shell: cmd
@@ -28,14 +33,14 @@ jobs:
           cd build
           ninja gfxstream_backend
 
-      - name: Find and upload DLL
+      - name: Collect DLLs
         shell: bash
         run: |
-          find build -name "*.dll" || true
           mkdir -p artifact
           find build -name "*gfxstream_backend*.dll" -exec cp {} artifact/ \; || true
           find build -name "*.dll" -exec cp {} artifact/ \; || true
-          ls -la artifact/
+          echo "=== DLLs found ==="
+          ls -la artifact/ || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
