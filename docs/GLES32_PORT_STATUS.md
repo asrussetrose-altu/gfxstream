@@ -109,3 +109,33 @@ standalone Gfxstream target.
 The complete machine-readable PE report and export list are available as the
 GitHub Actions artifact named `original-dll-analysis` from run
 `41006969411`.
+
+
+## GLES 3.2 negotiation patch (2026-10-30)
+
+A guarded host-side negotiation patch is being prepared on branch
+`gles32-negotiation`:
+
+- The host capability probe now attempts GLES 3.2 before 3.1 and 3.0.
+- If the EGL backend provides `eglGetMaxGLESVersion`, that backend-reported
+  maximum remains authoritative; the host does not override it.
+- RenderControl now maps a confirmed 3.2 maximum to the already-supported
+  guest token `ANDROID_EMU_gles_max_version_3_2` and reports `OpenGL ES 3.2`
+  in the GL version string.
+- The Gfxstream `EmulationGl` path in this checkout already allows a maximum
+  dispatch version of 3.2, and the shared enums and guest feature parser
+  already define 3.2.
+
+A Windows compile-only workflow was added for this branch. It deliberately
+does not upload or label its standalone DLL as an emulator replacement.
+Passing that workflow would establish only that the changed Gfxstream source
+compiles; it would not establish parent-emulator integration, the original
+349-export ABI, or runtime GLES 3.2 support.
+
+**Not complete / not installable yet:** the exact source revision for
+Emulator 37.2.12 (BuildId 16428233) remains unidentified. The translator's
+actual GLES 3.2 execution coverage has not yet been demonstrated on the
+NVIDIA GTX 1650 / Windows host. The parent `external/qemu` + pinned
+`hardware/google/gfxstream` build, PE export comparison, and exact 37.2.12
+runtime test are still required. Do not install a DLL from the standalone
+compile workflow.
