@@ -1,5 +1,25 @@
 name: Parent emulator DLL - Stage 1 configure only
 
+# REVISION attempt 8 (run 41118424422 failed at Configure):
+# attempt 7 PROVED the cmake staging: RESOLVER-PROBE found the
+# staged cmake, Configure actually ran cmake (not None), and
+# failed on a NEW error: CMAKE_C_COMPILER
+# C:/emu-master-dev/prebuilts/clang/host/windows-x86/clang-r530567/bin/clang-cl.exe
+# "is not a full path to an existing compiler tool".
+# Root cause, from emu-master-dev default.xml (76 projects):
+# prebuilts/clang/host/windows-x86 and prebuilts/cmake/windows-x86
+# are groups="notdefault,platform-windows", so the default partial
+# sync excludes them (hence repo list showed only the 3 synced
+# projects and no prebuilts dir). This revision therefore syncs
+# those two projects EXPLICITLY by path (explicit sync bypasses
+# group filtering, as the 3-project sync already proved) in a
+# new step before Configure, and verifies clang-cl + cmake.exe
+# exist before Configure runs. Configure's cmake staging stays
+# as fallback (it skips staging if a real prebuilt cmake.exe
+# is already present). If Configure next fails on another
+# missing prebuilt, that prebuilt's path is the evidence for
+# attempt 9, same pattern: sync it explicitly by path.
+
 # Manual only. Never on push.
 # Stage 1: repo init + partial sync (same 3 projects as Stage 0),
 # then configure the parent emulator tree WITHOUT compiling.
@@ -364,6 +384,20 @@ jobs:
           Get-ChildItem C:\emu-master-dev -ErrorAction SilentlyContinue | Select-Object Name
           Write-Output '--- CMAKE/AEMU env vars ---'
           Get-ChildItem Env: | Where-Object { $_.Name -match 'CMAKE|AEMU' } | ForEach-Object { "$($_.Name)=$($_.Value)" }
+      - name: Sync Windows prebuilts (clang + cmake, attempt 8)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 8: explicit sync of platform-windows prebuilts ---'
+          Write-Output 'Manifest groups them notdefault,platform-windows, so the default sync skipped them.'
+          repo sync -j 4 prebuilts/clang/host/windows-x86 prebuilts/cmake/windows-x86 2>&1 | Select-Object -Last 20
+          $clang = 'C:\emu-master-dev\prebuilts\clang\host\windows-x86\clang-r530567\bin\clang-cl.exe'
+          $cmake = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin\cmake.exe'
+          Write-Output "CLANG-CL-EXISTS: $(Test-Path $clang) ($clang)"
+          if (Test-Path $clang) { (Get-Item $clang).Length }
+          Write-Output "PREBUILT-CMAKE-EXISTS: $(Test-Path $cmake) ($cmake)"
+          if (Test-Path $cmake) { & $cmake --version 2>&1 | Select-Object -First 1 }
+          Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
