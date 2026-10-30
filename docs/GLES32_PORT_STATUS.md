@@ -171,3 +171,40 @@ validation, host context probing, dispatch loading/clearing, capability
 reporting, and feature/extension filtering. Then run GLES 3.2 CTS/dEQP tests
 to establish behavior. Until that work is complete, the PR must remain
 non-installable and must not advertise 3.2 as supported.
+
+
+## Follow-up translator audit: version tables and dispatch (2026-10-30)
+
+Additional checks confirmed that the GLES 3.2 gap is not caused by missing
+generated headers. The repository already contains
+`gles32_only.entries`, its generated function-list header, and generated
+logging wrappers. The GLESv2 dispatch header includes the generated 3.2
+namespaced declarations.
+
+The missing runtime wiring is explicit:
+
+- `GLESVersion` currently ends at `GLES_3_1`; the interface arrays in
+  `EglGlobalInfo` are sized by `MAX_GLES_VERSION`, so adding a new enum
+  value must be accompanied by reviewing all version-indexed tables.
+- `GLDispatch::clearDispatchFuncs()` clears GLES 3.1-only functions but not
+  GLES 3.2-only functions.
+- `GLDispatch::dispatchFuncs()` loads GLES 3.1-only functions but does not
+  load the six GLES 3.2-only functions, even though their generated list is
+  available.
+- EGL startup does not register a GLES 3.2 translator interface.
+- EGL context creation rejects minor version 2.
+- The EGL max-version setter maps reported value 3 (GLES 3.2) back to 3.1.
+- The native EGL probe attempts 3.1 and 3.0 only; the enum's ES32 value is
+  currently unused by that probe.
+- The versioned extension/capability caches and vendor/renderer/version
+  strings have special handling for 3.1 only. A 3.2 context must not
+  accidentally reuse the generic 3.0 cache or expose the wrong extension set.
+- `calcMaxESVersionFromCoreVersion()` currently caps desktop GL 4.x at
+  ES 3.1. Any extension of that mapping needs to be based on the actual
+  host API/translator requirements, not just a numeric GL version.
+
+This narrows the implementation plan, but does not make the change safe to
+enable yet. Before changing runtime negotiation, the translator needs a
+consistent 3.2 interface, context, dispatch, cache, and capability path, and
+the exact host backend must pass the GLES 3.2 CTS/dEQP coverage relevant to
+the features it advertises.
