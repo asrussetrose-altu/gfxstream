@@ -1,54 +1,45 @@
 name: Build Windows libgfxstream_backend.dll
 
 on:
-  workflow_dispatch:          # Manual button
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Force GLES 3.2 (simple patch)
-        shell: bash
-        run: |
-          # Force the detector to report 3.2
-          if [ -f host/gl/GLESVersionDetector.cpp ]; then
-            sed -i 's/GLES_DISPATCH_MAX_VERSION_3_1/GLES_DISPATCH_MAX_VERSION_3_2/g' host/gl/GLESVersionDetector.cpp
-            echo "Patched GLESVersionDetector.cpp"
-          else
-            echo "Warning: GLESVersionDetector.cpp not found at expected path"
-            find . -name "GLESVersionDetector.cpp" || true
-          fi
+      - name: Install Ninja
+        run: choco install ninja -y
 
-      - name: Configure with CMake (ClangCL)
+      - name: Configure with CMake (Ninja + ClangCL)
+        shell: cmd
         run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           mkdir build
           cd build
-          cmake .. -G "Visual Studio 17 2022" -A x64 -T ClangCL -DCMAKE_BUILD_TYPE=Release
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
 
       - name: Build
+        shell: cmd
         run: |
-          cmake --build build --config Release --target gfxstream_backend -j 4
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          cd build
+          ninja gfxstream_backend
 
-      - name: Locate the DLL
+      - name: Find and upload DLL
         shell: bash
         run: |
-          echo "=== Searching for DLL ==="
-          find build -name "libgfxstream_backend.dll" -o -name "gfxstream_backend.dll" || true
-          find build -name "*.dll" | head -20
+          find build -name "*.dll" || true
+          mkdir -p artifact
+          find build -name "*gfxstream_backend*.dll" -exec cp {} artifact/ \; || true
+          find build -name "*.dll" -exec cp {} artifact/ \; || true
+          ls -la artifact/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: libgfxstream_backend-windows
-          path: |
-            build/**/libgfxstream_backend.dll
-            build/**/gfxstream_backend.dll
-            build/Release/*.dll
-            build/Release/**/*.dll
+          path: artifact/
           if-no-files-found: warn
-          retention-days: 14
