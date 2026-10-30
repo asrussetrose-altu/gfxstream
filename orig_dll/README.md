@@ -1,0 +1,1 @@
+Reference copy of the untouched Android Emulator 37.2.12 libgfxstream_backend.dll used for PE export and compatibility analysis. Do not replace this binary with a rebuilt DLL.
