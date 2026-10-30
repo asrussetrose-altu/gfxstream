@@ -11,6 +11,7 @@ on:
       - 'host/common/**'
       - 'CMakeLists.txt'
       - '**/CMakeLists.txt'
+      - 'tools/windows-gl-capability-probe.cpp'
       - '.github/workflows/validate-gles32-compile.yml'
   workflow_dispatch:
 
@@ -38,3 +39,28 @@ jobs:
 
       - name: Compile gfxstream backend (no DLL artifact)
         run: cmake --build build --config Release --target gfxstream_backend --parallel
+
+
+  build-gl-capability-probe:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build read-only GL capability probe
+        shell: pwsh
+        run: |
+          cl /nologo /EHsc /W4 /O2 tools\windows-gl-capability-probe.cpp /Fe:gl-capability-probe.exe opengl32.lib user32.lib gdi32.lib
+          if ($LASTEXITCODE -ne 0) { throw "Capability probe compilation failed." }
+
+      - name: Upload capability probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-gl-capability-probe
+          path: gl-capability-probe.exe
+          if-no-files-found: error
