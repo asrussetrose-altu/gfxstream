@@ -227,3 +227,29 @@ from the presence of the six generated debug functions. A proper coverage
 matrix must map every GLES 3.2 core feature to either a translator core
 implementation or a tested extension implementation before version 3.2 is
 advertised.
+
+
+## Specification-level coverage checklist
+
+The Khronos GLES 3.2 specification's "New Features" section includes more
+than the six debug functions in the generated 3.2-only dispatch list. The
+implementation review must explicitly cover:
+
+- Geometry and tessellation shader stages.
+- Shader image atomic operations and shader interface blocks.
+- Multisample interpolation, sample shading, and sample variables.
+- Texture buffers, texture border color, cube-map arrays, and multisample
+  2D texture arrays.
+- STENCIL8 texture formats.
+- Base-vertex draw calls and robust buffer access/context flag behavior.
+- The Android extension-pack functionality incorporated into GLES 3.2,
+  including ASTC LDR, floating-point render targets, advanced blending, and
+  per-draw-buffer blending.
+
+Some of these may already be implemented through the GLES 3.1 core path or
+extension translation. They are marked **unverified**, not unsupported,
+until each feature is traced to concrete translator code and exercised by
+the corresponding CTS/dEQP tests.
+
+Reference: Khronos, OpenGL ES 3.2 Specification,
+https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf
