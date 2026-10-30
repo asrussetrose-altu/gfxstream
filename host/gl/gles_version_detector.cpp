@@ -17,6 +17,7 @@
 #include "gles_version_detector.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "OpenGLESDispatch/EGLDispatch.h"
 #include "gfxstream/strings.h"
@@ -28,6 +29,21 @@
 namespace gfxstream {
 namespace host {
 namespace gl {
+
+// GLES 3.2 capability gate (takeover, 2026-10-30).
+// Two checks are required before GLES 3.2 may be advertised:
+//   1. Host check: the actual EGL backend can create a GLES 3.2 context.
+//   2. Translator check: every required GLES 3.2 operation is implemented
+//      and correctly dispatched by the translator.
+// Check 1 exists in this file. Check 2 does NOT pass yet: the translator
+// audit on branch gles32-negotiation shows version enum, EGL interface
+// registration, context validation, dispatch loading/clearing, and
+// capability reporting all stop at 3.1. Until those are connected and
+// validated, this gate stays OFF and the advertised maximum is capped
+// at 3.1, with a diagnostic reason printed to stderr.
+static bool translatorSupportsGLES32() {
+    return false;
+}
 
 using gfxstream::HasExtension;
 
@@ -112,13 +128,24 @@ GLESDispatchMaxVersion calcMaxVersionFromDispatch(const gfxstream::host::Feature
         renderer == SELECTED_RENDERER_LAVAPIPE ||
         renderer == SELECTED_RENDERER_ANGLE_INDIRECT;
 
+    const bool allowGLES32 = translatorSupportsGLES32();
+
     if (usesEglMaxVersionQuery && s_egl.eglGetMaxGLESVersion) {
-        return static_cast<GLESDispatchMaxVersion>(s_egl.eglGetMaxGLESVersion(dpy));
+        const auto queried =
+            static_cast<GLESDispatchMaxVersion>(s_egl.eglGetMaxGLESVersion(dpy));
+        if (queried < GLES_DISPATCH_MAX_VERSION_3_2 || allowGLES32) {
+            return queried;
+        }
+        std::fprintf(stderr,
+                     "gfxstream: GLES 3.2 gated off: "
+                     "translator_gles32_not_implemented; "
+                     "falling back to GLES 3.1\n");
     }
 
     // Probe from highest to lowest. Never advertise a version solely because
     // it exists in the enum: the backend must successfully create that context.
-    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
+    if (allowGLES32 &&
+        sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
         return GLES_DISPATCH_MAX_VERSION_3_2;
     }
     if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
