@@ -139,3 +139,35 @@ NVIDIA GTX 1650 / Windows host. The parent `external/qemu` + pinned
 `hardware/google/gfxstream` build, PE export comparison, and exact 37.2.12
 runtime test are still required. Do not install a DLL from the standalone
 compile workflow.
+
+
+## Translator source audit (2026-10-30)
+
+A source-level audit of the translator shows why the negotiation patch alone
+cannot enable GLES 3.2. The checkout contains partial 3.2 scaffolding, but
+the version plumbing is not connected end-to-end:
+
+- `EglOS::GlesVersion::ES32` exists in `egl_os_api.h`, and
+  `gles32_only.entries` plus generated dispatch headers/implementation exist.
+  These are partial scaffolding, not proof of complete GLES 3.2 support.
+- The translator's `GLESVersion` enum in
+  `host/gl/glestranslator/common/include/common/gl_utils.h` stops at
+  `GLES_3_1`.
+- `GLDispatch::clearDispatchFuncs()` and `dispatchFuncs()` clear/load
+  GLES 3.1 functions but do not load the GLES 3.2-only dispatch list.
+- `egl_imp.cpp` registers translator interfaces only through
+  `GLES_3_1`; its EGL context-version switch rejects GLES 3.2 (minor 2).
+- `eglSetMaxGLESVersion()` explicitly maps the host value 3 (GLES 3.2)
+  back to `GLES_3_1`.
+- `egl_os_api_egl.cpp` probes a 3.1 context and then 3.0; it does not
+  probe a 3.2 context despite the existing `ES32` enum.
+- `egl_display.cpp` has no explicit GLES 3.2 object-manager alias.
+- `GLESv2Context` already has a 3.2 version-string case, but its capability
+  selection currently has a dedicated 3.1 capability structure only.
+
+The required translator work is therefore larger than the host negotiation
+change: connect the 3.2 version through EGL interface registration, context
+validation, host context probing, dispatch loading/clearing, capability
+reporting, and feature/extension filtering. Then run GLES 3.2 CTS/dEQP tests
+to establish behavior. Until that work is complete, the PR must remain
+non-installable and must not advertise 3.2 as supported.
