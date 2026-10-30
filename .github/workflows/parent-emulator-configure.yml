@@ -1,5 +1,31 @@
 name: Parent emulator DLL - Stage 1 configure only
 
+# REVISION attempt 12 (run 41137926692, main b3bef50, FAILED at step 17
+# Configure after steps 1-16 ALL succeeded): attempt 11's fix WORKED
+# — repo sync by FULL project path fetched qemu-android-deps and the
+# pixman include dir was present (step 16 success). Configure then
+# ran real cmake much further (clang-cl 19.0.0 detection passed) and
+# failed on the NEXT prebuilt at the same prebuilts.cmake:119 check:
+#   CMake Error at android/build/cmake/prebuilts.cmake:119 (message):
+#   The include directory
+#   C:/emu-master-dev/prebuilts/android-emulator-build/common/virglrenderer/windows_msvc-x86_64/include/virgl
+#   of VIRGLRENDERER does not exist.
+# So the next missing prebuilt lives under
+# prebuilts/android-emulator-build/common — a DIFFERENT project from
+# qemu-android-deps, not the parent prefix (attempts 9/10 proved the
+# parent prefix is not a project). This revision therefore adds a
+# step BEFORE Configure that (1) prints EVERY manifest line
+# containing 'android-emulator-build' (settles which project paths
+# exist, instead of guessing one), (2) repo-syncs every
+# android-emulator-build project path listed in default.xml, (3)
+# falls back to explicit sync of prebuilts/android-emulator-build/common
+# by path, then by name
+# platform/prebuilts/android-emulator-build/common, then a shallow
+# clone of that repo, and (4) verifies the exact virgl include dir
+# Configure needs, failing loudly WITH the manifest evidence if it
+# is still absent. If virgl appears, Configure runs and its next
+# failure (if any) is the new evidence.
+
 # REVISION attempt 11 (run 41136100024, main 0d58cfe, FAILED at step 16
 # after steps 1-15 all succeeded, incl. step 15 clang+cmake sync):
 # attempt 10's own manifest evidence SETTLED the question it set out
@@ -502,6 +528,37 @@ jobs:
           Write-Output "QEMU-ANDROID-DEPS-ROOT-EXISTS: $(Test-Path $depsRoot)"
           if (Test-Path $depsRoot) { Get-ChildItem $depsRoot | Select-Object -First 20 Name }
           if (-not (Test-Path $pixman)) { Write-Output 'QEMU-ANDROID-DEPS-MISSING: pixman include dir absent after full-path sync + full-name sync + clone of the qemu-android-deps repo; Configure would fail at prebuilts.cmake:119.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync android-emulator-build common prebuilts (attempt 12)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 12: manifest evidence (all android-emulator-build projects) ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'android-emulator-build' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $virgl = 'C:\emu-master-dev\prebuilts\android-emulator-build\common\virglrenderer\windows_msvc-x86_64\include\virgl'
+          Write-Output '--- sync every android-emulator-build project path listed in the manifest ---'
+          $paths = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="(prebuilts/android-emulator-build/[^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Select-Object -Unique)
+          Write-Output "MANIFEST-ANDROID-EMULATOR-PROJECTS: $($paths -join ', ')"
+          if ($paths.Count -gt 0) { repo sync -j 4 $paths 2>&1 | Select-Object -Last 10; Write-Output "repo sync manifest projects exit code: $LASTEXITCODE" }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: repo sync common by path ---'
+            repo sync -j 4 prebuilts/android-emulator-build/common 2>&1 | Select-Object -Last 10
+            Write-Output "repo sync common by path exit code: $LASTEXITCODE"
+          }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: repo sync common by name ---'
+            repo sync -j 4 platform/prebuilts/android-emulator-build/common 2>&1 | Select-Object -Last 10
+            Write-Output "repo sync common by name exit code: $LASTEXITCODE"
+          }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: shallow git clone of the common repo itself ---'
+            Remove-Item -Recurse -Force C:\emu-master-dev\prebuilts\android-emulator-build\common -ErrorAction SilentlyContinue
+            git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build/common C:\emu-master-dev\prebuilts\android-emulator-build\common 2>&1 | Select-Object -Last 10
+            Write-Output "git clone common exit code: $LASTEXITCODE"
+          }
+          Write-Output "VIRGL-INCLUDE-EXISTS: $(Test-Path $virgl) ($virgl)"
+          if (Test-Path $virgl) { Get-ChildItem $virgl | Select-Object -First 5 Name }
+          if (-not (Test-Path $virgl)) { Write-Output 'COMMON-VIRGL-MISSING: virgl include dir absent after manifest-project sync + path/name sync + clone; Configure would fail at prebuilts.cmake:119.'; exit 1 }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
