@@ -1,0 +1,40 @@
+name: Validate GLES 3.2 host changes (compile only)
+
+on:
+  push:
+    branches:
+      - gles32-negotiation
+    paths:
+      - 'host/gl/gles_version_detector.cpp'
+      - 'host/render_control.cpp'
+      - 'host/gl/**'
+      - 'host/common/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/validate-gles32-compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure standalone compile check
+        shell: pwsh
+        run: |
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+          $vsPath = & $vswhere -latest -products '*' -property installationPath
+          if (-not $vsPath) { throw "Visual Studio 2022 was not found." }
+          $clang = Join-Path $vsPath 'VC\\Tools\\Llvm\\bin\\clang-cl.exe'
+          if (-not (Test-Path $clang)) { throw "clang-cl was not found: $clang" }
+          & $clang --version
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL -DBUILD_STANDALONE=ON
+
+      - name: Compile gfxstream backend (no DLL artifact)
+        run: cmake --build build --config Release --target gfxstream_backend --parallel
