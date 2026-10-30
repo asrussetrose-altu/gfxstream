@@ -5,19 +5,22 @@ name: Parent emulator DLL - Stage 1 configure only
 # then configure the parent emulator tree WITHOUT compiling.
 # No DLL, no install, no overlay yet: the gfxstream overlay
 # (minimal, gate OFF) comes at the full-build stage, not here.
-# CORRECTION 2026-10-30 (run 41105580373): the previous
-# candidate flag "--build config" does NOT exist in this tree's
-# cmake.py. It was ignored ("Leftover arguments: ['--build',
-# 'config'], are ignored") and the wrapper then proceeded with
-# defaults and failed in <1s with "Build failure due to
-# argument should be a str or an os.PathLike object where
-# __fspath__ returns a str, not 'NoneType'". Valid mechanisms
-# per --help are: --task TASK, --task-list, --feature-list,
-# --gfxstream, --gfxstream_only, --ccache none. This revision
-# therefore discovers the real task list first and only runs a
-# configure task if one literally exists; otherwise it reports
-# NO-CONFIGURE-TASK-FOUND and succeeds, so the next check can
-# wire the correct invocation from the log instead of guessing.
+# REVISION 2026-10-30 (run 41106731187): --task-list itself
+# fails BEFORE listing any task: cmake.py toolchain discovery
+# prints "Discovered: []" then "Build failure due to No visual
+# studio with the native desktop load available for version
+# '[16, 17)'" on windows-2022 image 20261025.346. The previous
+# fix's task regex ALSO false-matched the echoed invocation
+# line "cmake.py --ccache ..." (the \b after "cmake" matches
+# before "."), so it ran a bogus "--task cmake" and failed the
+# same way. This revision therefore (a) adds a VS-discovery
+# diagnosis step (vswhere dump, VS install dirs, and the exact
+# discovery code in cmake.py) so the next fix targets the real
+# cause instead of guessing, and (b) fixes the task regex to
+# ignore the "cmake.py" echo line and require a real task entry,
+# and (c) reports VS-DISCOVERY-BLOCKED with exit 1 when the
+# task list fails on VS discovery, instead of masking it as
+# NO-CONFIGURE-TASK-FOUND.
 # Target labelling (unchanged): emu-master-dev is a moving
 # branch, NOT a 37.2.12 pin. Any later DLL from this tree is
 # "parent-built, export-compared, user-tested on 37.2.12",
@@ -65,6 +68,23 @@ jobs:
           git -C external/qemu rev-parse HEAD
           git -C hardware/google/gfxstream rev-parse HEAD
           git -C hardware/google/aemu rev-parse HEAD
+      - name: Diagnose Visual Studio discovery
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          Write-Output "vswhere present: $(Test-Path $vswhere) ($vswhere)"
+          if (Test-Path $vswhere) {
+            Write-Output '--- vswhere -all ---'
+            & $vswhere -all -products * 2>&1 | Select-Object -First 40
+            Write-Output '--- vswhere NativeDesktop requirement ---'
+            & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop 2>&1 | Select-Object -First 40
+          }
+          Write-Output '--- VS install dirs ---'
+          Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name
+          Write-Output '--- discovery code in cmake.py tree ---'
+          Set-Location C:\emu-master-dev\external\qemu
+          Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'native desktop|Discovered|vswhere|VisualStudio' | Select-Object -First 40 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
       - name: Show rebuild entry point and help
         shell: pwsh
         run: |
@@ -94,9 +114,12 @@ jobs:
           Set-Location C:\emu-master-dev\external\qemu
           $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
           Write-Output $list
+          if ($list -match 'No visual studio') { Write-Output 'VS-DISCOVERY-BLOCKED'; exit 1 }
+          $entries = ($list -split "`n") | Where-Object { $_ -notmatch 'cmake\.py' }
+          $joined = $entries -join "`n"
           $task = $null
           foreach ($name in @('cmake', 'configure', 'config')) {
-            if ($list -match "(?m)^\s*$name\b") { $task = $name; break }
+            if ($joined -match "(?m)^\s*$name\s*(:|$)") { $task = $name; break }
           }
           if (-not $task) { Write-Output 'NO-CONFIGURE-TASK-FOUND'; exit 0 }
           Write-Output "Running configure task: $task"
