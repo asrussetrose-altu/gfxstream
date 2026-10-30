@@ -1,0 +1,56 @@
+name: Inspect original emulator DLL
+
+on:
+  push:
+    paths:
+      - '.github/workflows/inspect-original-dll.yml'
+      - 'orig_dll/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inspect PE and exports
+        shell: pwsh
+        run: |
+          python -m pip install pefile
+          @'
+          import hashlib, json, pathlib, pefile
+          p = pathlib.Path("orig_dll/libgfxstream_backend.dll")
+          data = p.read_bytes()
+          pe = pefile.PE(str(p), fast_load=False)
+          pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"], pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
+          exports = []
+          for s in getattr(pe, "DIRECTORY_ENTRY_EXPORT", []).symbols:
+              exports.append({"ordinal": s.ordinal, "name": s.name.decode("ascii", "replace") if s.name else None, "address": hex(s.address), "forwarder": s.forwarder.decode("ascii", "replace") if s.forwarder else None})
+          imports = {}
+          for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []):
+              imports[entry.dll.decode("ascii", "replace")] = [x.name.decode("ascii", "replace") if x.name else f"ordinal_{x.ordinal}" for x in entry.imports]
+          report = {
+            "file": str(p), "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+            "machine": hex(pe.FILE_HEADER.Machine), "timestamp": pe.FILE_HEADER.TimeDateStamp,
+            "image_base": hex(pe.OPTIONAL_HEADER.ImageBase), "entry_point": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint),
+            "subsystem": pe.OPTIONAL_HEADER.Subsystem, "sections": [{"name": x.Name.rstrip(b"\\0").decode("ascii","replace"), "virtual_size": x.Misc_VirtualSize, "raw_size": x.SizeOfRawData} for x in pe.sections],
+            "export_count": len(exports), "exports": exports, "imports": imports
+          }
+          pathlib.Path("original-dll-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+          pathlib.Path("original-dll-exports.txt").write_text("\\n".join(f'{x["ordinal"]} {x["name"] or "<NONAME>"}' for x in exports), encoding="utf-8")
+          print(json.dumps({k:v for k,v in report.items() if k not in ("exports","imports")}, indent=2))
+          print("EXPORTS:")
+          for x in exports: print(x["ordinal"], x["name"] or "<NONAME>")
+          '@ | Set-Content -Encoding utf8 inspect_dll.py
+          python inspect_dll.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: original-dll-analysis
+          path: |
+            original-dll-report.json
+            original-dll-exports.txt
