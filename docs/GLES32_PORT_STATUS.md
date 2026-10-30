@@ -253,3 +253,35 @@ the corresponding CTS/dEQP tests.
 
 Reference: Khronos, OpenGL ES 3.2 Specification,
 https://registry.khronos.org/OpenGL/specs/es/3.2/es_spec_3.2.pdf
+
+
+## Windows NVIDIA fast-path investigation
+
+The Windows translator path uses WGL. Its current implementation creates a
+desktop **core-profile** context, records the highest core version, and passes
+that version to `calcMaxESVersionFromCoreVersion()`. The helper intentionally
+caps OpenGL 4.x at GLES 3.1.
+
+There is a potentially useful NVIDIA-specific alternative worth testing before
+implementing a large shader translator:
+
+- `GL_ARB_ES3_2_compatibility` adds GLES 3.2 features missing from desktop
+  OpenGL 4.5, but the Khronos extension specification is written against the
+  OpenGL 4.5 **compatibility profile**.
+- It does not establish that the current WGL core-profile context exposes the
+  extension or that Gfxstream can use it safely.
+- The GTX 1650 / NVIDIA 592.82 machine's actual extension list has not yet
+  been captured.
+
+A read-only Windows diagnostic utility has therefore been added at
+`tools/windows-gl-capability-probe.cpp`. It creates temporary hidden-window
+OpenGL 4.5 core and compatibility contexts and reports whether
+`GL_ARB_ES3_2_compatibility`, `GL_ARB_ES3_1_compatibility`, and related
+feature extensions are exposed by the local driver. It does not modify the
+emulator, driver, registry, or AVDs.
+
+The workflow now has a separate job to compile and upload this diagnostic
+utility as `windows-gl-capability-probe.exe`. This is a diagnostic only, not
+a replacement DLL. If the extension is present only in compatibility mode,
+we must still validate whether Gfxstream can use that context profile without
+breaking its rendering assumptions.
