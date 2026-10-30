@@ -41,6 +41,10 @@ static const EGLint gles3ConfigAttribs[] =
 static const EGLint pbufAttribs[] =
     { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
 
+static const EGLint gles32Attribs[] =
+   { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+     EGL_CONTEXT_MINOR_VERSION_KHR, 2, EGL_NONE };
+
 static const EGLint gles31Attribs[] =
    { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
      EGL_CONTEXT_MINOR_VERSION_KHR, 1, EGL_NONE };
@@ -61,6 +65,9 @@ static bool sTryContextCreation(EGLDisplay dpy, GLESDispatchMaxVersion ver) {
     switch (ver) {
     case GLES_DISPATCH_MAX_VERSION_3_0:
         contextAttribs = gles30Attribs;
+        break;
+    case GLES_DISPATCH_MAX_VERSION_3_2:
+        contextAttribs = gles32Attribs;
         break;
     case GLES_DISPATCH_MAX_VERSION_3_1:
         contextAttribs = gles31Attribs;
@@ -98,9 +105,10 @@ static bool sTryContextCreation(EGLDisplay dpy, GLESDispatchMaxVersion ver) {
 
 GLESDispatchMaxVersion calcMaxVersionFromDispatch(const gfxstream::host::FeatureSet& features,
                                                   EGLDisplay dpy) {
-    // TODO: 3.1 is the highest
+    // Start at the highest version supported by the shared dispatch enum;
+    // the EGL backend query or context-creation probes below must confirm it.
     GLESDispatchMaxVersion maxVersion =
-       GLES_DISPATCH_MAX_VERSION_3_1;
+       GLES_DISPATCH_MAX_VERSION_3_2;
 
     if (get_gfxstream_renderer() == SELECTED_RENDERER_HOST
         || get_gfxstream_renderer() == SELECTED_RENDERER_SWIFTSHADER_INDIRECT
@@ -111,7 +119,11 @@ GLESDispatchMaxVersion calcMaxVersionFromDispatch(const gfxstream::host::Feature
                 (GLESDispatchMaxVersion)s_egl.eglGetMaxGLESVersion(dpy);
         }
     } else {
-        if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
+        if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
+            maxVersion = GLES_DISPATCH_MAX_VERSION_3_1;
+        }
+        if (maxVersion == GLES_DISPATCH_MAX_VERSION_3_1 &&
+            !sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
             maxVersion = GLES_DISPATCH_MAX_VERSION_3_0;
             if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_0)) {
                 maxVersion = GLES_DISPATCH_MAX_VERSION_2;
