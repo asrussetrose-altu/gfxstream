@@ -55,6 +55,33 @@ name: Parent emulator DLL - Stage 1 configure only
 # file; (2) fixes the choco params to the double-dash form
 # (--add ... --includeRecommended); (3) adds a %TEMP%
 # dd_*.log diagnostic after a no-op bootstrapper run.
+# REVISION 2026-10-31 (run 41111628449, main ce1d44d): fix
+# attempt 3 failed for a FILENAME TYPO, not for a real VS
+# reason. Its own *.json grep PRINTED the config file and its
+# value — C:\emu-master-dev\external\qemu\android\build\
+# toolchains.json (PLURAL): "visual_studio_version": "[16, 17)"
+# — and Toolchain.__init__ opens exactly
+# <aosp>/external/qemu/android/build/toolchains.json. But the
+# step searched for singular "toolchain.json", found nothing,
+# wrote OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAIN-JSON, and never
+# patched anything. The VS2019 install step then ran: choco
+# SUCCEEDED (visualstudio2019buildtools 16.11.60, deployed to
+# 2019\BuildTools, exit 0), yet the strict vswhere check
+# (-requires NativeDesktop -version '[16,17)') still returned
+# [] — consistent with the workload itself not being
+# registered/installed by that choco route, not with a missing
+# VS2019 directory. This revision therefore (1) fixes the
+# search to toolchains.json (plural, direct path first) and
+# actually patches [16,17) -> [17,18), so aemu can discover
+# the already-present VS2022 Enterprise 17.14 (vswhere range
+# [17,18) DID return its installationPath in run 41111628449
+# step 7); (2) makes the VS2019 step NON-FATAL: it now dumps
+# raw unfiltered vswhere + the vcvars64.bat existence check
+# after choco and continues to the configure probe, which is
+# the real VS gate (VS-DISCOVERY-BLOCKED if aemu still finds
+# nothing) — a strict-check failure must no longer kill the
+# job before the configure probe runs; (3) guards the override
+# probe against a missing android\rebuild.cmd.
 # Target labelling (unchanged): emu-master-dev is a moving
 # branch, NOT a 37.2.12 pin. Any later DLL from this tree is
 # "parent-built, export-compared, user-tested on 37.2.12",
@@ -138,13 +165,14 @@ jobs:
         shell: pwsh
         run: |
           Set-Location C:\emu-master-dev\external\qemu
-          Write-Output '--- toolchain config search ---'
-          Get-ChildItem android -Filter toolchain.json -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Output '--- toolchain config search (PLURAL toolchains.json; run 41111628449 proved singular toolchain.json misses it) ---'
+          Get-ChildItem android -Filter toolchains.json -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
           Get-ChildItem android -Filter *.json -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'visual_studio_version' | Select-Object -First 20 | ForEach-Object { "$($_.Path): $($_.Line.Trim())" }
           Write-Output '--- toolchains.py versions loader ---'
           Get-Content android\build\python\aemu\platform\toolchains.py -ErrorAction SilentlyContinue | Select-Object -First 160
-          $cfg = Get-ChildItem android -Filter toolchain.json -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $cfg) { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAIN-JSON'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          $cfg = 'android\build\toolchains.json'
+          if (-not (Test-Path $cfg)) { $cfg = Get-ChildItem android -Filter toolchains.json -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
+          if (-not $cfg) { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAINS-JSON'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
           Write-Output "toolchain config: $cfg"
           $raw = Get-Content $cfg -Raw
           if ($raw -notmatch 'visual_studio_version') { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-KEY'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
@@ -153,6 +181,7 @@ jobs:
           if ($patched -eq $raw) { Write-Output 'OVERRIDE-PATCH-NOOP'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
           Set-Content $cfg $patched -NoNewline
           Write-Output 'Patched visual_studio_version to [17, 18); probing --task-list:'
+          if (-not (Test-Path android\rebuild.cmd)) { Write-Output 'OVERRIDE-PROBE-FAILED-NO-REBUILD-CMD'; Get-ChildItem android | Where-Object { $_.Name -like 'rebuild*' } | Select-Object Name; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
           $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
           Write-Output $list
           if ($list -match 'No visual studio') { Write-Output 'OVERRIDE-PROBE-FAILED'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
@@ -188,13 +217,19 @@ jobs:
             Write-Output 'Bootstrapper produced no VS2019; falling back to Chocolatey visualstudio2019buildtools.'
             # Run 41109966366 proved the slash form fails (setup.exe
             # exit 87: Option /Add unknown); use double-dash form.
-            choco install visualstudio2019buildtools -y --no-progress --params "'--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended'" 2>&1 | Select-Object -Last 30
+            choco install visualstudio2019buildtools -y --no-progress --params "'--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended'" 2>&1 | Select-Object -Last 60
             Write-Output "Choco exit code: $LASTEXITCODE"
             $found3 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
             Write-Output "After choco, VS2019 vswhere bytes=$($found3.Length)"
-            if (-not ($found3 -match 'installationPath')) { Write-Output 'VS2019-INSTALL-FAILED'; exit 1 }
+            $rawVs = & $vswhere -all -products * -format json 2>&1 | Out-String
+            Write-Output "After choco, raw vswhere (no filters) head: $($rawVs.Substring(0, [Math]::Min(600, $rawVs.Length)))"
+            $vcvars = Test-Path 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+            Write-Output "After choco, VS2019 vcvars64.bat present: $vcvars"
+            if (-not ($found3 -match 'installationPath')) {
+              Write-Output 'VS2019-INSTALL-FAILED-NONFATAL: continuing; the configure step is the real VS gate (VS-DISCOVERY-BLOCKED if aemu still finds nothing).'
+              'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs2019.txt"
+            } else { Write-Output 'VS2019-INSTALLED' }
           }
-          Write-Output 'VS2019-INSTALLED'
       - name: Show rebuild entry point and help
         shell: pwsh
         run: |
