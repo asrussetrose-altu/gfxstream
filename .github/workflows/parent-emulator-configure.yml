@@ -1,4 +1,26 @@
 name: Parent emulator DLL - Stage 1 configure only
+# REVISION attempt 13 (run 41139970648, main b711813, FAILED at step 18
+# Configure after steps 1-17 ALL succeeded, incl. the attempt-12 virgl
+# fix): Configure finally ran real cmake and failed NOT on a prebuilt
+# but on the partial sync itself — the third-party closure under
+# external/ and tools/ was never synced, so cmake reported, in one
+# run, every missing directory it needs: external/abseil-cpp/absl,
+# external/astc-codec/src, external/boringssl, external/cares,
+# external/glib/glib, external/grpc/emulator, external/protobuf,
+# external/tink/tink+proto, external/zlib/zlib.h,
+# external/flatbuffers, external/libslirp/src/libslirp-version.h.in,
+# tools/netsim/proto+src/util+src/backend. This revision therefore
+# adds a step BEFORE Configure that (1) prints every manifest line
+# for those third-party keywords (no guessing at project names —
+# e.g. cares vs c-ares is settled by the manifest), (2) repo-syncs
+# each candidate project path one by one, (3) falls back to a
+# shallow clone of the manifest-named repo for any path still
+# absent, and (4) prints a sentinel report for every directory
+# Configure named, WITHOUT failing fast — Configure itself is the
+# judge and runs in ~30s, so a wrong sentinel guess must not cost
+# another full cycle. Free disk was only ~7 GB at the end of
+# attempt 12, so the step also reports disk before/after.
+
 
 # REVISION attempt 12 (run 41137926692, main b3bef50, FAILED at step 17
 # Configure after steps 1-16 ALL succeeded): attempt 11's fix WORKED
@@ -559,6 +581,34 @@ jobs:
           Write-Output "VIRGL-INCLUDE-EXISTS: $(Test-Path $virgl) ($virgl)"
           if (Test-Path $virgl) { Get-ChildItem $virgl | Select-Object -First 5 Name }
           if (-not (Test-Path $virgl)) { Write-Output 'COMMON-VIRGL-MISSING: virgl include dir absent after manifest-project sync + path/name sync + clone; Configure would fail at prebuilts.cmake:119.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync third-party closure (attempt 13)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 13: manifest evidence for the third-party closure Configure named ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'abseil|astc|boringssl|cares|c-ares|glib|grpc|protobuf|tink|zlib|flatbuffers|libslirp|netsim' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'abseil|astc-codec|boringssl|cares|c-ares|/glib$|/glib/|/grpc|protobuf|/tink|/zlib|flatbuffers|libslirp|netsim' } | Select-Object -Unique)
+          Write-Output "THIRDPARTY-CANDIDATES: $($cands -join ', ')"
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 13 sentinel report (directories Configure named in attempt 12) ---'
+          $checks = @('external/abseil-cpp/absl', 'external/astc-codec/src/decoder', 'external/boringssl/CMakeLists.txt', 'external/cares', 'external/c-ares', 'external/glib/glib', 'external/grpc/emulator', 'external/protobuf', 'external/tink/tink', 'external/zlib/zlib.h', 'external/flatbuffers/CMakeLists.txt', 'external/libslirp/src/libslirp-version.h.in', 'tools/netsim/proto')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
