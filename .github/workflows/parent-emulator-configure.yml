@@ -5,12 +5,19 @@ name: Parent emulator DLL - Stage 1 configure only
 # then configure the parent emulator tree WITHOUT compiling.
 # No DLL, no install, no overlay yet: the gfxstream overlay
 # (minimal, gate OFF) comes at the full-build stage, not here.
-# The configure flag spelling is the known uncertainty in this
-# stage (see agent01-parent-build.md section 8): the help step
-# runs first so its output is in the log even if the configure
-# candidate flag is rejected. The configure step is bounded to
-# 120 minutes so a mis-parsed flag that starts a full build
-# cannot burn the whole 6-hour job cap unnoticed.
+# CORRECTION 2026-10-30 (run 41105580373): the previous
+# candidate flag "--build config" does NOT exist in this tree's
+# cmake.py. It was ignored ("Leftover arguments: ['--build',
+# 'config'], are ignored") and the wrapper then proceeded with
+# defaults and failed in <1s with "Build failure due to
+# argument should be a str or an os.PathLike object where
+# __fspath__ returns a str, not 'NoneType'". Valid mechanisms
+# per --help are: --task TASK, --task-list, --feature-list,
+# --gfxstream, --gfxstream_only, --ccache none. This revision
+# therefore discovers the real task list first and only runs a
+# configure task if one literally exists; otherwise it reports
+# NO-CONFIGURE-TASK-FOUND and succeeds, so the next check can
+# wire the correct invocation from the log instead of guessing.
 # Target labelling (unchanged): emu-master-dev is a moving
 # branch, NOT a 37.2.12 pin. Any later DLL from this tree is
 # "parent-built, export-compared, user-tested on 37.2.12",
@@ -67,13 +74,31 @@ jobs:
           elseif (Test-Path android\rebuild.bat) { cmd /c android\rebuild.bat --help }
           elseif (Test-Path android\rebuild.sh) { bash android/rebuild.sh --help }
           else { Write-Output 'NO-REBUILD-WRAPPER-FOUND'; exit 1 }
-      - name: Configure only (candidate flag, bounded)
+      - name: List cmake tasks and features (discovery, no build)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          cmd /c android\rebuild.cmd --ccache none --task-list
+          cmd /c android\rebuild.cmd --ccache none --feature-list
+      - name: Inspect cmake.py task definitions (no build)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          $py = Get-ChildItem android -Filter cmake.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          Write-Output "cmake.py: $py"
+          if ($py) { Select-String -Path $py -Pattern 'task' | Select-Object -First 60 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } }
+      - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
         run: |
           Set-Location C:\emu-master-dev\external\qemu
-          if (Test-Path android\rebuild.cmd) { cmd /c android\rebuild.cmd --build config }
-          elseif (Test-Path android\rebuild.bat) { cmd /c android\rebuild.bat --build config }
-          elseif (Test-Path android\rebuild.sh) { bash android/rebuild.sh --build config }
-          else { Write-Output 'NO-REBUILD-WRAPPER-FOUND'; exit 1 }
+          $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
+          Write-Output $list
+          $task = $null
+          foreach ($name in @('cmake', 'configure', 'config')) {
+            if ($list -match "(?m)^\s*$name\b") { $task = $name; break }
+          }
+          if (-not $task) { Write-Output 'NO-CONFIGURE-TASK-FOUND'; exit 0 }
+          Write-Output "Running configure task: $task"
+          cmd /c android\rebuild.cmd --ccache none --task $task
           Get-PSDrive C | Select-Object Used, Free
