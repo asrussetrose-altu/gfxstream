@@ -1,4 +1,23 @@
 name: Parent emulator DLL - Stage 1 configure only
+# REVISION attempt 14 (run 41143970411, main 515daa8, FAILED at step 19
+# Configure after steps 1-18 ALL succeeded, incl. the attempt-13
+# third-party closure): attempt 13 WORKED for its targets — all its
+# sentinels were True except the c-ares alias (real path is
+# external/cares) — and Configure ran further, into gfxstream
+# subdirectories and Qt, before failing on three NEW missing
+# directories, all from the same partial-sync cause:
+#   external/webrtc/third_party/libyuv (not an existing directory)
+#   external/webrtc/third_party/jsoncpp (not an existing directory)
+#   external/libpng/LICENSE (license validation FileNotFoundError,
+#     path C:/emu-master-dev/external/qemu/../libpng//LICENSE)
+# This revision therefore adds a step BEFORE Configure that (1)
+# prints every manifest line for webrtc and libpng, (2) repo-syncs
+# each candidate project path matching those names, (3) falls back
+# to a shallow clone of the manifest-named repo for any path still
+# absent, and (4) prints a sentinel report for the three paths
+# Configure named, WITHOUT failing fast — Configure is the judge.
+# Disk was ~3.2 GB free at the end of attempt 13, so the step also
+# reports disk before/after.
 # REVISION attempt 13 (run 41139970648, main b711813, FAILED at step 18
 # Configure after steps 1-17 ALL succeeded, incl. the attempt-12 virgl
 # fix): Configure finally ran real cmake and failed NOT on a prebuilt
@@ -608,6 +627,35 @@ jobs:
           }
           Write-Output '--- attempt 13 sentinel report (directories Configure named in attempt 12) ---'
           $checks = @('external/abseil-cpp/absl', 'external/astc-codec/src/decoder', 'external/boringssl/CMakeLists.txt', 'external/cares', 'external/c-ares', 'external/glib/glib', 'external/grpc/emulator', 'external/protobuf', 'external/tink/tink', 'external/zlib/zlib.h', 'external/flatbuffers/CMakeLists.txt', 'external/libslirp/src/libslirp-version.h.in', 'tools/netsim/proto')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync webrtc + libpng closure (attempt 14)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 14: manifest evidence for webrtc + libpng ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'webrtc|libpng' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match '^external/webrtc($|/)|^external/libpng($|/)' } | Select-Object -Unique)
+          Write-Output "WEBRTC-LIBPNG-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/webrtc', 'external/libpng') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 14 sentinel report ---'
+          $checks = @('external/webrtc/third_party/libyuv', 'external/webrtc/third_party/jsoncpp', 'external/libpng/LICENSE')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
