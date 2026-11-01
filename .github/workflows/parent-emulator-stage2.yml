@@ -1,0 +1,954 @@
+name: Parent emulator DLL - Stage 2 parent-only build
+# STAGE 2 PARENT-ONLY (user-approved 2026-11-01 23:52 PKT, "do whatever is best, just give me a working DLL").
+# Built fresh from the proven Stage 1 workflow (run 41294347461, main 500f2d9, 27/27 steps, Configure passed).
+# Every Stage 1 sync step is kept identical. NO fork overlay, NO gate code, NO gate flip:
+# the parent tree (gfxstream HEAD d047a572) is compiled exactly as synced.
+# VERIFIED COMPILE INVOCATION, from Stage 1 run 41294347461 job 124811947995 log:
+#   - step 11 --task-list: Clean, Configure, Compile, CTest, ... (no dependency analysis for --task;
+#     cmake.py main(): if args.task: tasks = [x for x in tasks if x.name.lower() == args.task.lower()])
+#   - step 11 --feature-list: "gfxstream_backend: Build the gfxstream backend (plus everything else)."
+#   - step 12 cmake.py: --feature is action=append, "Explicitly enable/disable a feature";
+#     ConfigureTask receives features=args.feature, so the flag must be passed at Configure time.
+# Therefore Stage 2 runs, in the same job and same objs dir:
+#   android\rebuild.cmd --ccache none --feature gfxstream_backend --task configure
+#   android\rebuild.cmd --ccache none --feature gfxstream_backend --task compile
+# Disk risk (known, not yet observed as a Stage 2 failure): Stage 1 left ~5.6 GB free after
+# sync+configure; the backend feature is "plus everything else", so Compile needs more disk.
+# If Compile fails on disk, do NOT enable a paid larger runner without the user's decision.
+# REVISION attempt 15 (run 41277174163, main 176824b, FAILED at step 20
+# Configure after steps 1-19 ALL succeeded, incl. the attempt-14
+# webrtc+libpng closure): attempt 14 WORKED for its targets - Configure
+# ran through gfxstream subdirectories and Qt to the final
+# license-validation step, then failed on ONE missing file from the
+# same partial-sync cause:
+#   external/google-breakpad/LICENSE (FileNotFoundError in
+#   android/build/python/aemu/licensing.py, via CMakeLists.txt:1067
+#   finalize_all_licenses; path C:/emu-master-dev/external/qemu/../
+#   google-breakpad/LICENSE, i.e. external/google-breakpad/LICENSE)
+# This revision therefore adds a step BEFORE Configure that (1) prints
+# every manifest line for breakpad, (2) repo-syncs each candidate
+# project path matching breakpad, (3) falls back to a shallow clone
+# of the manifest-named repo for any path still absent, and (4)
+# prints a sentinel report for external/google-breakpad/LICENSE,
+# WITHOUT failing fast - Configure is the judge.
+# Disk was ~2.6 GB free at the end of attempt 14, so the step also
+# reports disk before/after.
+# REVISION attempt 14 (run 41143970411, main 515daa8, FAILED at step 19
+# Configure after steps 1-18 ALL succeeded, incl. the attempt-13
+# third-party closure): attempt 13 WORKED for its targets — all its
+# sentinels were True except the c-ares alias (real path is
+# external/cares) — and Configure ran further, into gfxstream
+# subdirectories and Qt, before failing on three NEW missing
+# directories, all from the same partial-sync cause:
+#   external/webrtc/third_party/libyuv (not an existing directory)
+#   external/webrtc/third_party/jsoncpp (not an existing directory)
+#   external/libpng/LICENSE (license validation FileNotFoundError,
+#     path C:/emu-master-dev/external/qemu/../libpng//LICENSE)
+# This revision therefore adds a step BEFORE Configure that (1)
+# prints every manifest line for webrtc and libpng, (2) repo-syncs
+# each candidate project path matching those names, (3) falls back
+# to a shallow clone of the manifest-named repo for any path still
+# absent, and (4) prints a sentinel report for the three paths
+# Configure named, WITHOUT failing fast — Configure is the judge.
+# Disk was ~3.2 GB free at the end of attempt 13, so the step also
+# reports disk before/after.
+# REVISION attempt 13 (run 41139970648, main b711813, FAILED at step 18
+# Configure after steps 1-17 ALL succeeded, incl. the attempt-12 virgl
+# fix): Configure finally ran real cmake and failed NOT on a prebuilt
+# but on the partial sync itself — the third-party closure under
+# external/ and tools/ was never synced, so cmake reported, in one
+# run, every missing directory it needs: external/abseil-cpp/absl,
+# external/astc-codec/src, external/boringssl, external/cares,
+# external/glib/glib, external/grpc/emulator, external/protobuf,
+# external/tink/tink+proto, external/zlib/zlib.h,
+# external/flatbuffers, external/libslirp/src/libslirp-version.h.in,
+# tools/netsim/proto+src/util+src/backend. This revision therefore
+# adds a step BEFORE Configure that (1) prints every manifest line
+# for those third-party keywords (no guessing at project names —
+# e.g. cares vs c-ares is settled by the manifest), (2) repo-syncs
+# each candidate project path one by one, (3) falls back to a
+# shallow clone of the manifest-named repo for any path still
+# absent, and (4) prints a sentinel report for every directory
+# Configure named, WITHOUT failing fast — Configure itself is the
+# judge and runs in ~30s, so a wrong sentinel guess must not cost
+# another full cycle. Free disk was only ~7 GB at the end of
+# attempt 12, so the step also reports disk before/after.
+
+
+# REVISION attempt 12 (run 41137926692, main b3bef50, FAILED at step 17
+# Configure after steps 1-16 ALL succeeded): attempt 11's fix WORKED
+# — repo sync by FULL project path fetched qemu-android-deps and the
+# pixman include dir was present (step 16 success). Configure then
+# ran real cmake much further (clang-cl 19.0.0 detection passed) and
+# failed on the NEXT prebuilt at the same prebuilts.cmake:119 check:
+#   CMake Error at android/build/cmake/prebuilts.cmake:119 (message):
+#   The include directory
+#   C:/emu-master-dev/prebuilts/android-emulator-build/common/virglrenderer/windows_msvc-x86_64/include/virgl
+#   of VIRGLRENDERER does not exist.
+# So the next missing prebuilt lives under
+# prebuilts/android-emulator-build/common — a DIFFERENT project from
+# qemu-android-deps, not the parent prefix (attempts 9/10 proved the
+# parent prefix is not a project). This revision therefore adds a
+# step BEFORE Configure that (1) prints EVERY manifest line
+# containing 'android-emulator-build' (settles which project paths
+# exist, instead of guessing one), (2) repo-syncs every
+# android-emulator-build project path listed in default.xml, (3)
+# falls back to explicit sync of prebuilts/android-emulator-build/common
+# by path, then by name
+# platform/prebuilts/android-emulator-build/common, then a shallow
+# clone of that repo, and (4) verifies the exact virgl include dir
+# Configure needs, failing loudly WITH the manifest evidence if it
+# is still absent. If virgl appears, Configure runs and its next
+# failure (if any) is the new evidence.
+
+# REVISION attempt 11 (run 41136100024, main 0d58cfe, FAILED at step 16
+# after steps 1-15 all succeeded, incl. step 15 clang+cmake sync):
+# attempt 10's own manifest evidence SETTLED the question it set out
+# to answer. default.xml line 64 reads:
+#   <project path="prebuilts/android-emulator-build/qemu-android-deps"
+#     name="platform/prebuilts/android-emulator-build/qemu-android-deps"
+#     clone-depth="1" />
+# So qemu-android-deps IS a manifest project, but under its FULL path,
+# not the parent prefix. Attempts 9 and 10 both synced the PARENT
+# prefix (path prebuilts/android-emulator-build, name
+# platform/prebuilts/android-emulator-build), which is a directory
+# prefix, not a project or a git repo — hence "project not found"
+# and "repository not found" in both attempts. Attempt 9's "only 5
+# projects" repo-list evidence was misleading: repo list shows only
+# SYNCED projects, and the partial sync had only synced 5.
+# This revision therefore (1) greps default.xml for the exact
+# qemu-android-deps line, (2) repo syncs the FULL project path
+# prebuilts/android-emulator-build/qemu-android-deps first
+# (explicit path sync bypassed group filtering for clang/cmake in
+# attempt 8, so it is the right first try), (3) falls back to the
+# full project NAME platform/prebuilts/android-emulator-build/
+# qemu-android-deps if pixman is still absent, and (4) falls back
+# to a shallow git clone of that exact repo (not the parent repo)
+# into the project path dir. If pixman appears, Configure runs
+# and its next failure (if any) is the new evidence.
+
+# REVISION attempt 10 (run 41134318019, main f6bfda2, FAILED at step 16
+# in ~4s): attempt 9 PROVED the manifest question, not just a sync
+# hiccup. Full repo list showed only 5 projects (external/qemu,
+# hardware/google/aemu, hardware/google/gfxstream,
+# prebuilts/clang/host/windows-x86, prebuilts/cmake/windows-x86)
+# and NO android-emulator line, and `repo sync
+# prebuilts/android-emulator-build` failed with "error: project
+# prebuilts/android-emulator-build not found". So that path is not
+# a project in the emu-master-dev manifest as repo sees it, and
+# retrying the same path sync cannot work. This revision therefore
+# (1) dumps manifest evidence (.repo/manifests/default.xml greps
+# for android-emulator/prebuilts, plus .repo/manifest.xml),
+# (2) prints prebuilts.cmake around line 119 and every
+# qemu-android-deps reference in the qemu tree, (3) tries repo
+# sync by project NAME platform/prebuilts/android-emulator-build
+# (name vs path lookup can differ), and (4) if pixman is still
+# absent, shallow-clones platform/prebuilts/android-emulator-build
+# from android.googlesource.com (emu-master-dev branch first,
+# default branch fallback) directly into
+# prebuilts/android-emulator-build, then verifies the exact
+# pixman include dir Configure needs. If the clone also fails,
+# the step fails loudly WITH the manifest + cmake evidence, so
+# attempt 11 does not guess again. If pixman appears, Configure
+# runs and its next failure (if any) is the new evidence.
+# REVISION attempt 9 (run 41132454021, main 7d4addb, FAILED at step 16
+# Configure after 17s): attempt 8 was a big step forward — clang-cl
+# (Clang 19.0.0, MSVC-like) and prebuilt cmake 3.23.1 both WORKED,
+# compiler detection passed, and Configure ran real cmake. The NEW
+# failure is CMake Error at android/build/cmake/prebuilts.cmake:119:
+# "The include directory C:/emu-master-dev/prebuilts/
+# android-emulator-build/qemu-android-deps/windows_msvc-x86_64/
+# include/pixman-1 of PIXMAN does not exist." The partial sync
+# never fetched prebuilts/android-emulator-build, so the whole
+# qemu-android-deps tree is absent. Attempt 6 checked this project
+# but its repo-list greps printed nothing and it was skipped, so
+# the manifest question is still open. This revision therefore
+# adds a step BEFORE Configure that (1) prints the FULL repo list
+# (attempt 8 truncated it to 30 lines) and greps for
+# android-emulator, (2) tries an explicit path sync of
+# prebuilts/android-emulator-build (explicit path sync bypassed
+# group filtering for clang/cmake in attempt 8, so it is the
+# right first try here too), capturing the exit code, and (3)
+# verifies the exact pixman include dir Configure needs, failing
+# loudly as QEMU-ANDROID-DEPS-MISSING with the repo-list evidence
+# if it is still absent after the sync attempt. It also drops the
+# stale "repo sync prebuilts/cmake" block in the Configure step,
+# which only ever printed "error: project prebuilts/cmake not
+# found" (the real path is prebuilts/cmake/windows-x86, already
+# synced by the attempt-8 step). If Configure next fails on a
+# different missing prebuilt, that path is the evidence for
+# attempt 10, same pattern.
+# REVISION attempt 8 (run 41118424422 failed at Configure):
+# attempt 7 PROVED the cmake staging: RESOLVER-PROBE found the
+# staged cmake, Configure actually ran cmake (not None), and
+# failed on a NEW error: CMAKE_C_COMPILER
+# C:/emu-master-dev/prebuilts/clang/host/windows-x86/clang-r530567/bin/clang-cl.exe
+# "is not a full path to an existing compiler tool".
+# Root cause, from emu-master-dev default.xml (76 projects):
+# prebuilts/clang/host/windows-x86 and prebuilts/cmake/windows-x86
+# are groups="notdefault,platform-windows", so the default partial
+# sync excludes them (hence repo list showed only the 3 synced
+# projects and no prebuilts dir). This revision therefore syncs
+# those two projects EXPLICITLY by path (explicit sync bypasses
+# group filtering, as the 3-project sync already proved) in a
+# new step before Configure, and verifies clang-cl + cmake.exe
+# exist before Configure runs. Configure's cmake staging stays
+# as fallback (it skips staging if a real prebuilt cmake.exe
+# is already present). If Configure next fails on another
+# missing prebuilt, that prebuilt's path is the evidence for
+# attempt 9, same pattern: sync it explicitly by path.
+
+# Manual only. Never on push.
+# Stage 1: repo init + partial sync (same 3 projects as Stage 0),
+# then configure the parent emulator tree WITHOUT compiling.
+# No DLL, no install, no overlay yet: the gfxstream overlay
+# (minimal, gate OFF) comes at the full-build stage, not here.
+# REVISION 2026-10-30 (run 41106731187): --task-list itself
+# fails BEFORE listing any task: cmake.py toolchain discovery
+# prints "Discovered: []" then "Build failure due to No visual
+# studio with the native desktop load available for version
+# '[16, 17)'" on windows-2022 image 20261025.346. The previous
+# fix's task regex ALSO false-matched the echoed invocation
+# line "cmake.py --ccache ..." (the \b after "cmake" matches
+# before "."), so it ran a bogus "--task cmake" and failed the
+# same way. This revision therefore (a) adds a VS-discovery
+# diagnosis step (vswhere dump, VS install dirs, and the exact
+# discovery code in cmake.py) so the next fix targets the real
+# cause instead of guessing, and (b) fixes the task regex to
+# ignore the "cmake.py" echo line and require a real task entry,
+# and (c) reports VS-DISCOVERY-BLOCKED with exit 1 when the
+# task list fails on VS discovery, instead of masking it as
+# NO-CONFIGURE-TASK-FOUND.
+# REVISION 2026-10-30 (run 41108179796): the diagnosis step
+# PROVED the cause. vswhere -all AND -requires NativeDesktop
+# both return VS Enterprise 2022 17.14.37824.6, yet aemu
+# discovery prints "Discovered: []" and fails for version
+# '[16, 17)'. That range is >=16 and <17, i.e. VS2019 ONLY:
+# the installed VS2022 17.x is outside it, so discovery finds
+# nothing even though NativeDesktop is present. This revision
+# therefore (a) prints the full VS-discovery code in
+# environment.py and the vswhere JSON counts for the [16,17)
+# and [17,18) ranges, and (b) installs VS2019 Build Tools
+# with the NativeDesktop workload when no VS2019 instance is
+# found, then re-checks vswhere, before any --task-list call.
+# If the VS2019 install fails, the job fails loudly there
+# instead of later as VS-DISCOVERY-BLOCKED.
+# REVISION 2026-10-30 (run 41109966366, main d4c3d88): fix
+# attempt 2 failed on BOTH install paths. (a) The VS2019
+# bootstrapper (aka.ms/vs/16/release/vs_BuildTools.exe,
+# 4,422,824 bytes) exits 0 in ~30ms and creates NO
+# vs2019-install.log: it never starts the installer engine.
+# (b) The Chocolatey fallback fails with installer exit 87:
+# "Option '/Add' is unknown. Usage: setup.exe install
+# [options]" — the slash-form params were passed verbatim to
+# setup.exe, which only accepts the double-dash form. (c) The
+# caller grep PROVED an override exists that avoids VS2019
+# entirely: aemu/platform/toolchains.py:150 returns
+# self.versions.get("visual_studio_version", "[16, 17)"), i.e.
+# the range comes from a toolchain config, defaulting to
+# VS2019-only. This revision therefore (1) tries the override
+# FIRST: locate the toolchain config, set
+# visual_studio_version to "[17, 18)", and probe --task-list;
+# on success the VS2019 install step is skipped via a marker
+# file; (2) fixes the choco params to the double-dash form
+# (--add ... --includeRecommended); (3) adds a %TEMP%
+# dd_*.log diagnostic after a no-op bootstrapper run.
+# REVISION 2026-10-31 (run 41111628449, main ce1d44d): fix
+# attempt 3 failed for a FILENAME TYPO, not for a real VS
+# reason. Its own *.json grep PRINTED the config file and its
+# value — C:\emu-master-dev\external\qemu\android\build\
+# toolchains.json (PLURAL): "visual_studio_version": "[16, 17)"
+# — and Toolchain.__init__ opens exactly
+# <aosp>/external/qemu/android/build/toolchains.json. But the
+# step searched for singular "toolchain.json", found nothing,
+# wrote OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAIN-JSON, and never
+# patched anything. The VS2019 install step then ran: choco
+# SUCCEEDED (visualstudio2019buildtools 16.11.60, deployed to
+# 2019\BuildTools, exit 0), yet the strict vswhere check
+# (-requires NativeDesktop -version '[16,17)') still returned
+# [] — consistent with the workload itself not being
+# registered/installed by that choco route, not with a missing
+# VS2019 directory. This revision therefore (1) fixes the
+# search to toolchains.json (plural, direct path first) and
+# actually patches [16,17) -> [17,18), so aemu can discover
+# the already-present VS2022 Enterprise 17.14 (vswhere range
+# [17,18) DID return its installationPath in run 41111628449
+# step 7); (2) makes the VS2019 step NON-FATAL: it now dumps
+# raw unfiltered vswhere + the vcvars64.bat existence check
+# after choco and continues to the configure probe, which is
+# the real VS gate (VS-DISCOVERY-BLOCKED if aemu still finds
+# nothing) — a strict-check failure must no longer kill the
+# job before the configure probe runs; (3) guards the override
+# probe against a missing android\rebuild.cmd.
+# Target labelling (unchanged): emu-master-dev is a moving
+# branch, NOT a 37.2.12 pin. Any later DLL from this tree is
+# "parent-built, export-compared, user-tested on 37.2.12",
+# never "the 37.2.12 DLL rebuilt from source".
+# Gate stays OFF: translatorSupportsGLES32() returns false.
+
+# REVISION 2026-10-31 (run 41113776450, main c2f12a6): fix
+# attempt 4 PROVED the VS fix: the [17,18) toolchains.json
+# override worked — aemu discovered VS2022 Enterprise 17.14
+# and the Configure task actually RAN. It then failed on a NEW
+# error, not VS: "Run: None -B...objs ... in None" /
+# "'None' is not recognized as an internal or external
+# command" — the cmake executable resolved to Python None.
+# This revision therefore (1) adds a cmake-diagnosis step
+# BEFORE Configure that prints where.exe cmake, cmake
+# --version, the PATH seen by the step, the cmake-executable
+# resolution code in cmake.py / aemu/prebuilts/deps/windows.py,
+# and any prebuilt cmake.exe under the synced tree, so the
+# next fix targets the real resolver instead of guessing; and
+# (2) makes Configure first put a found system cmake on PATH
+# for its cmd subprocess, and choco-installs cmake if none is
+# found at all, then re-runs the configure task. If configure
+# still fails with None, the diagnosis output is the evidence
+# for attempt 6 (e.g. a prebuilt-cmake path the partial sync
+# omitted).
+
+# REVISION 2026-10-31 (run 41114919831, main 3f91c44): fix
+# attempt 5 FAILED at step 14 Configure with the SAME None
+# error, but its step 13 diagnosis settled one question:
+# system cmake EXISTS (C:\Program Files\CMake\bin\cmake.exe,
+# 3.31.6, found by where.exe) and step 14 prepended it to PATH,
+# yet rebuild still ran "None -B...objs -G Ninja". The resolver
+# therefore does NOT use PATH cmake. What step 13 did NOT show:
+# the launcher android\build\python\cmake.py is only
+# "from aemu import cmake; cmake.launch()" — the real resolver
+# lives in aemu/cmake.py, which was never printed; and the
+# partial sync tree has NO prebuilts dir at all (top level is
+# .repo, external, hardware only). This revision therefore
+# (1) adds a resolver-dump step BEFORE Configure that prints
+# aemu/cmake.py in full plus every cmake-resolution line in
+# the aemu python tree, the manifest's prebuilt/cmake
+# projects (repo list), and CMAKE/AEMU env vars, so attempt 7
+# patches the exact resolver instead of guessing; and
+# (2) makes Configure try a guarded repo sync of
+# prebuilts/android-emulator-build ONLY if repo list shows it
+# in the manifest (skipped otherwise, so no blind multi-GB
+# download), then re-runs the configure task either way.
+# If configure still fails with None, the dump output is the
+# evidence for attempt 7 (patch the resolver to system cmake,
+# or sync the exact prebuilt path it reads).
+
+# REVISION 2026-10-31 (run 41116846874, main 20ae9ea): fix
+# attempt 6 FAILED at step 15 Configure with the SAME None
+# error, but its step 14 dump + the synced revision's own
+# source settled the root cause exactly. aemu/tasks/
+# configure.py (qemu ae9d18d, fetched from the AOSP mirror at
+# that SHA) resolves cmake as:
+#   cmake = shutil.which("cmake", path=str(aosp / "prebuilts"
+#     / "cmake" / f"{platform.system().lower()}-x86" / "bin"))
+# shutil.which with an explicit path= searches ONLY that
+# directory and ignores PATH entirely — so attempts 5 and 6
+# prepending system cmake to PATH could never work. Attempt 6
+# also checked the WRONG project: prebuilts/android-
+# emulator-build (only the sccache location, unused with
+# --ccache none), not prebuilts/cmake; and its repo list
+# greps printed nothing at all, so the manifest question is
+# still open. This revision therefore (1) stages the runner's
+# own system cmake into the exact path the resolver reads:
+# prebuilts/cmake/windows-x86/bin/cmake.exe plus its share/
+# tree (cmake locates Modules relative to the exe), and
+# verifies with the identical shutil.which call before
+# running Configure; (2) still prints raw repo list output
+# (first 30 lines) for the record, and tries a guarded
+# repo sync of prebuilts/cmake ONLY if repo list actually
+# lists it — staging remains the primary fix either way.
+# Staging is a build-environment workaround for Stage 1
+# configure-only, not a code change; the full-build stage
+# should prefer the real prebuilt cmake if it syncs.
+# If Configure still fails, the next failure (e.g. ninja)
+# is the new evidence for attempt 8.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  stage2-parentonly:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: Report free disk before sync
+        shell: pwsh
+        run: |
+          Get-PSDrive C | Select-Object Used, Free
+          Get-ComputerInfo | Select-Object TotalPhysicalMemory
+      - name: Install repo tool (Windows form, per WINDOWS-DEV.md)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\bin" | Out-Null
+          curl.exe -o "$env:USERPROFILE\bin\repo" http://storage.googleapis.com/git-repo-downloads/repo
+          "@call python %~dp0repo %* " | Out-File -Encoding ascii "$env:USERPROFILE\bin\repo.cmd"
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\bin"
+          git config --global core.autocrlf false
+          git config --global core.symlinks true
+      - name: Repo init and partial sync (Stage 0 proven)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\emu-master-dev | Out-Null
+          Set-Location C:\emu-master-dev
+          repo init -u https://android.googlesource.com/platform/manifest -b emu-master-dev --depth=1
+          repo sync -j 8 external/qemu hardware/google/gfxstream hardware/google/aemu
+          Get-ChildItem C:\emu-master-dev | Select-Object Name
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Record synced HEAD SHAs
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          git -C external/qemu rev-parse HEAD
+          git -C hardware/google/gfxstream rev-parse HEAD
+          git -C hardware/google/aemu rev-parse HEAD
+      - name: Diagnose Visual Studio discovery
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          Write-Output "vswhere present: $(Test-Path $vswhere) ($vswhere)"
+          if (Test-Path $vswhere) {
+            Write-Output '--- vswhere -all ---'
+            & $vswhere -all -products * 2>&1 | Select-Object -First 40
+            Write-Output '--- vswhere NativeDesktop requirement ---'
+            & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop 2>&1 | Select-Object -First 40
+          }
+          Write-Output '--- VS install dirs ---'
+          Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object Name
+          Write-Output '--- discovery code in cmake.py tree ---'
+          Set-Location C:\emu-master-dev\external\qemu
+          Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'native desktop|Discovered|vswhere|VisualStudio' | Select-Object -First 40 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+      - name: Print VS discovery code and version-range counts
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- environment.py VS section ---'
+          Get-Content android\build\python\aemu\process\environment.py -ErrorAction SilentlyContinue | Select-Object -First 160
+          Write-Output '--- where visual_studio_version comes from ---'
+          Select-String -Path android\build\python\cmake.py -Pattern 'visual_studio_version|VisualStudio' -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- caller of get_default_environment / 16, 17 in whole build tree ---'
+          Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'get_default_environment|16, 17|16,17' | Select-Object -First 30 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          foreach ($range in @('[16,17)', '[17,18)')) {
+            $out = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version $range -format json 2>&1 | Out-String
+            Write-Output "vswhere range $range bytes=$($out.Length) head=$($out.Substring(0, [Math]::Min(200, $out.Length)))"
+          }
+      - name: Try VS2022 via toolchain visual_studio_version override
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- toolchain config search (PLURAL toolchains.json; run 41111628449 proved singular toolchain.json misses it) ---'
+          Get-ChildItem android -Filter toolchains.json -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
+          Get-ChildItem android -Filter *.json -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'visual_studio_version' | Select-Object -First 20 | ForEach-Object { "$($_.Path): $($_.Line.Trim())" }
+          Write-Output '--- toolchains.py versions loader ---'
+          Get-Content android\build\python\aemu\platform\toolchains.py -ErrorAction SilentlyContinue | Select-Object -First 160
+          $cfg = 'android\build\toolchains.json'
+          if (-not (Test-Path $cfg)) { $cfg = Get-ChildItem android -Filter toolchains.json -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName }
+          if (-not $cfg) { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-TOOLCHAINS-JSON'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Write-Output "toolchain config: $cfg"
+          $raw = Get-Content $cfg -Raw
+          if ($raw -notmatch 'visual_studio_version') { Write-Output 'OVERRIDE-NOT-APPLICABLE-NO-KEY'; 'NA' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Copy-Item $cfg "$cfg.bak" -Force
+          $patched = $raw -replace '"visual_studio_version"\s*:\s*"[^"]*"', '"visual_studio_version": "[17, 18)"'
+          if ($patched -eq $raw) { Write-Output 'OVERRIDE-PATCH-NOOP'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Set-Content $cfg $patched -NoNewline
+          Write-Output 'Patched visual_studio_version to [17, 18); probing --task-list:'
+          if (-not (Test-Path android\rebuild.cmd)) { Write-Output 'OVERRIDE-PROBE-FAILED-NO-REBUILD-CMD'; Get-ChildItem android | Where-Object { $_.Name -like 'rebuild*' } | Select-Object Name; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
+          Write-Output $list
+          if ($list -match 'No visual studio') { Write-Output 'OVERRIDE-PROBE-FAILED'; 'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"; exit 0 }
+          Write-Output 'OVERRIDE-PROBE-OK-VS2022-DISCOVERY-PASSED'; 'OK' | Out-File -Encoding ascii "$env:TEMP\vs-override.txt"
+      - name: Install VS2019 Build Tools if no VS2019 found
+        shell: pwsh
+        timeout-minutes: 120
+        run: |
+          if (Test-Path "$env:TEMP\vs-override.txt") {
+            $marker = (Get-Content "$env:TEMP\vs-override.txt" -Raw).Trim()
+            if ($marker -eq 'OK') { Write-Output 'SKIPPING-VS2019-INSTALL-OVERRIDE-OK'; exit 0 }
+          }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $found = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+          if ($found -match 'installationPath') { Write-Output 'VS2019-ALREADY-PRESENT'; exit 0 }
+          Write-Output 'No VS2019 instance found; installing VS2019 Build Tools (NativeDesktop workload).'
+          $exe = "$env:TEMP\vs_BuildTools2019.exe"
+          Invoke-WebRequest -Uri 'https://aka.ms/vs/16/release/vs_BuildTools.exe' -OutFile $exe
+          Write-Output "Bootstrapper bytes: $((Get-Item $exe).Length)"
+          # Previous attempt (run 41109450340) exited 0 in <1s with no
+          # install: use --quiet plus a log file, and keep the log tail
+          # in the job log for diagnosis if it still does nothing.
+          & $exe --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended --quiet --wait --norestart --log "$env:TEMP\vs2019-install.log"
+          Write-Output "Bootstrapper exit code: $LASTEXITCODE"
+          if (Test-Path "$env:TEMP\vs2019-install.log") { Get-Content "$env:TEMP\vs2019-install.log" -Tail 30 }
+          else {
+            Write-Output 'No vs2019-install.log; newest VS installer dd_*.log in %TEMP%:'
+            Get-ChildItem $env:TEMP -Filter dd_*.log -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 3 Name, Length | ForEach-Object { Write-Output "$($_.Name) $($_.Length)"; Get-Content "$env:TEMP\$($_.Name)" -Tail 15 -ErrorAction SilentlyContinue }
+          }
+          $found2 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+          Write-Output "After bootstrapper, VS2019 vswhere bytes=$($found2.Length)"
+          if (-not ($found2 -match 'installationPath')) {
+            Write-Output 'Bootstrapper produced no VS2019; falling back to Chocolatey visualstudio2019buildtools.'
+            # Run 41109966366 proved the slash form fails (setup.exe
+            # exit 87: Option /Add unknown); use double-dash form.
+            choco install visualstudio2019buildtools -y --no-progress --params "'--add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended'" 2>&1 | Select-Object -Last 60
+            Write-Output "Choco exit code: $LASTEXITCODE"
+            $found3 = & $vswhere -all -products * -requires Microsoft.VisualStudio.Workload.NativeDesktop -version '[16,17)' -format json 2>&1 | Out-String
+            Write-Output "After choco, VS2019 vswhere bytes=$($found3.Length)"
+            $rawVs = & $vswhere -all -products * -format json 2>&1 | Out-String
+            Write-Output "After choco, raw vswhere (no filters) head: $($rawVs.Substring(0, [Math]::Min(600, $rawVs.Length)))"
+            $vcvars = Test-Path 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
+            Write-Output "After choco, VS2019 vcvars64.bat present: $vcvars"
+            if (-not ($found3 -match 'installationPath')) {
+              Write-Output 'VS2019-INSTALL-FAILED-NONFATAL: continuing; the configure step is the real VS gate (VS-DISCOVERY-BLOCKED if aemu still finds nothing).'
+              'FAILED' | Out-File -Encoding ascii "$env:TEMP\vs2019.txt"
+            } else { Write-Output 'VS2019-INSTALLED' }
+          }
+      - name: Show rebuild entry point and help
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Get-ChildItem android | Where-Object { $_.Name -like 'rebuild*' } | Select-Object Name, Length
+          if (Test-Path android\rebuild.cmd) { cmd /c android\rebuild.cmd --help }
+          elseif (Test-Path android\rebuild.bat) { cmd /c android\rebuild.bat --help }
+          elseif (Test-Path android\rebuild.sh) { bash android/rebuild.sh --help }
+          else { Write-Output 'NO-REBUILD-WRAPPER-FOUND'; exit 1 }
+      - name: List cmake tasks and features (discovery, no build)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          cmd /c android\rebuild.cmd --ccache none --task-list
+          cmd /c android\rebuild.cmd --ccache none --feature-list
+      - name: Inspect cmake.py task definitions (no build)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          $py = Get-ChildItem android -Filter cmake.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          Write-Output "cmake.py: $py"
+          if ($py) { Select-String -Path $py -Pattern 'task' | Select-Object -First 60 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } }
+      - name: Diagnose cmake executable (run 41113776450 resolved it to None)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- where cmake / version ---'
+          where.exe cmake 2>&1 | Select-Object -First 5
+          if (Get-Command cmake -ErrorAction SilentlyContinue) { cmake --version 2>&1 | Select-Object -First 2 }
+          else { Write-Output 'NO-SYSTEM-CMAKE-ON-PATH' }
+          Write-Output '--- PATH entries (first 20) ---'
+          ($env:Path -split ';') | Select-Object -First 20
+          Write-Output '--- cmake.py: how the cmake executable is resolved ---'
+          $py = Get-ChildItem android -Filter cmake.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          Write-Output "cmake.py: $py"
+          if ($py) { Select-String -Path $py -Pattern 'which|shutil|prebuilt|cmake.*exe|get_cmake|CMAKE' | Select-Object -First 40 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } }
+          Write-Output '--- aemu prebuilts deps (windows) ---'
+          Get-Content android\build\python\aemu\prebuilts\deps\windows.py -ErrorAction SilentlyContinue | Select-Object -First 120
+          Write-Output '--- prebuilt cmake candidates under synced tree ---'
+          Get-ChildItem C:\emu-master-dev -Filter cmake.exe -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -First 10 FullName
+          Get-ChildItem android\build\cmake -ErrorAction SilentlyContinue | Select-Object Name
+      - name: Dump cmake resolver code (aemu/cmake.py)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Write-Output '--- launcher cmake.py (full) ---'
+          Get-Content android\build\python\cmake.py -ErrorAction SilentlyContinue
+          Write-Output '--- aemu/cmake.py (full, first 400 lines) ---'
+          Get-Content android\build\python\aemu\cmake.py -ErrorAction SilentlyContinue | Select-Object -First 400
+          Write-Output '--- cmake-resolution lines in aemu python tree ---'
+          Get-ChildItem android\build\python -Filter *.py -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'cmake' | Where-Object { $_.Line -match 'which|prebuilt|environ|executable|bin\\|CMAKE_|get_|path' } | Select-Object -First 60 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- manifest: prebuilt/cmake projects ---'
+          Set-Location C:\emu-master-dev
+          repo list 2>&1 | Select-String -Pattern 'prebuilt|cmake' | Select-Object -First 20
+          Write-Output '--- prebuilts dir present? ---'
+          Write-Output "prebuilts exists: $(Test-Path C:\emu-master-dev\prebuilts)"
+          Get-ChildItem C:\emu-master-dev -ErrorAction SilentlyContinue | Select-Object Name
+          Write-Output '--- CMAKE/AEMU env vars ---'
+          Get-ChildItem Env: | Where-Object { $_.Name -match 'CMAKE|AEMU' } | ForEach-Object { "$($_.Name)=$($_.Value)" }
+      - name: Sync Windows prebuilts (clang + cmake, attempt 8)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 8: explicit sync of platform-windows prebuilts ---'
+          Write-Output 'Manifest groups them notdefault,platform-windows, so the default sync skipped them.'
+          repo sync -j 4 prebuilts/clang/host/windows-x86 prebuilts/cmake/windows-x86 2>&1 | Select-Object -Last 20
+          $clang = 'C:\emu-master-dev\prebuilts\clang\host\windows-x86\clang-r530567\bin\clang-cl.exe'
+          $cmake = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin\cmake.exe'
+          Write-Output "CLANG-CL-EXISTS: $(Test-Path $clang) ($clang)"
+          if (Test-Path $clang) { (Get-Item $clang).Length }
+          Write-Output "PREBUILT-CMAKE-EXISTS: $(Test-Path $cmake) ($cmake)"
+          if (Test-Path $cmake) { & $cmake --version 2>&1 | Select-Object -First 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync qemu-android-deps prebuilt (attempt 11)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 11: manifest evidence (attempt 10 line 64: full project path) ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'qemu-android-deps' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $pixman = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64\include\pixman-1'
+          Write-Output '--- try repo sync by FULL project path (attempts 9/10 synced the parent prefix, not a project) ---'
+          repo sync -j 4 prebuilts/android-emulator-build/qemu-android-deps 2>&1 | Select-Object -Last 10
+          Write-Output "repo sync by full path exit code: $LASTEXITCODE"
+          if (-not (Test-Path $pixman)) {
+            Write-Output '--- fallback: repo sync by FULL project name ---'
+            repo sync -j 4 platform/prebuilts/android-emulator-build/qemu-android-deps 2>&1 | Select-Object -Last 10
+            Write-Output "repo sync by full name exit code: $LASTEXITCODE"
+          }
+          if (-not (Test-Path $pixman)) {
+            Write-Output '--- fallback: shallow git clone of the qemu-android-deps repo itself (not the parent) ---'
+            Remove-Item -Recurse -Force C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps -ErrorAction SilentlyContinue
+            git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build/qemu-android-deps C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps 2>&1 | Select-Object -Last 10
+            Write-Output "git clone qemu-android-deps exit code: $LASTEXITCODE"
+          }
+          Write-Output "PIXMAN-INCLUDE-EXISTS: $(Test-Path $pixman) ($pixman)"
+          if (Test-Path $pixman) { Get-ChildItem $pixman | Select-Object -First 5 Name }
+          $depsRoot = 'C:\emu-master-dev\prebuilts\android-emulator-build\qemu-android-deps\windows_msvc-x86_64'
+          Write-Output "QEMU-ANDROID-DEPS-ROOT-EXISTS: $(Test-Path $depsRoot)"
+          if (Test-Path $depsRoot) { Get-ChildItem $depsRoot | Select-Object -First 20 Name }
+          if (-not (Test-Path $pixman)) { Write-Output 'QEMU-ANDROID-DEPS-MISSING: pixman include dir absent after full-path sync + full-name sync + clone of the qemu-android-deps repo; Configure would fail at prebuilts.cmake:119.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync android-emulator-build common prebuilts (attempt 12)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Write-Output '--- attempt 12: manifest evidence (all android-emulator-build projects) ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'android-emulator-build' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $virgl = 'C:\emu-master-dev\prebuilts\android-emulator-build\common\virglrenderer\windows_msvc-x86_64\include\virgl'
+          Write-Output '--- sync every android-emulator-build project path listed in the manifest ---'
+          $paths = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="(prebuilts/android-emulator-build/[^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Select-Object -Unique)
+          Write-Output "MANIFEST-ANDROID-EMULATOR-PROJECTS: $($paths -join ', ')"
+          if ($paths.Count -gt 0) { repo sync -j 4 $paths 2>&1 | Select-Object -Last 10; Write-Output "repo sync manifest projects exit code: $LASTEXITCODE" }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: repo sync common by path ---'
+            repo sync -j 4 prebuilts/android-emulator-build/common 2>&1 | Select-Object -Last 10
+            Write-Output "repo sync common by path exit code: $LASTEXITCODE"
+          }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: repo sync common by name ---'
+            repo sync -j 4 platform/prebuilts/android-emulator-build/common 2>&1 | Select-Object -Last 10
+            Write-Output "repo sync common by name exit code: $LASTEXITCODE"
+          }
+          if (-not (Test-Path $virgl)) {
+            Write-Output '--- fallback: shallow git clone of the common repo itself ---'
+            Remove-Item -Recurse -Force C:\emu-master-dev\prebuilts\android-emulator-build\common -ErrorAction SilentlyContinue
+            git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build/common C:\emu-master-dev\prebuilts\android-emulator-build\common 2>&1 | Select-Object -Last 10
+            Write-Output "git clone common exit code: $LASTEXITCODE"
+          }
+          Write-Output "VIRGL-INCLUDE-EXISTS: $(Test-Path $virgl) ($virgl)"
+          if (Test-Path $virgl) { Get-ChildItem $virgl | Select-Object -First 5 Name }
+          if (-not (Test-Path $virgl)) { Write-Output 'COMMON-VIRGL-MISSING: virgl include dir absent after manifest-project sync + path/name sync + clone; Configure would fail at prebuilts.cmake:119.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync third-party closure (attempt 13)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 13: manifest evidence for the third-party closure Configure named ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'abseil|astc|boringssl|cares|c-ares|glib|grpc|protobuf|tink|zlib|flatbuffers|libslirp|netsim' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'abseil|astc-codec|boringssl|cares|c-ares|/glib$|/glib/|/grpc|protobuf|/tink|/zlib|flatbuffers|libslirp|netsim' } | Select-Object -Unique)
+          Write-Output "THIRDPARTY-CANDIDATES: $($cands -join ', ')"
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 13 sentinel report (directories Configure named in attempt 12) ---'
+          $checks = @('external/abseil-cpp/absl', 'external/astc-codec/src/decoder', 'external/boringssl/CMakeLists.txt', 'external/cares', 'external/c-ares', 'external/glib/glib', 'external/grpc/emulator', 'external/protobuf', 'external/tink/tink', 'external/zlib/zlib.h', 'external/flatbuffers/CMakeLists.txt', 'external/libslirp/src/libslirp-version.h.in', 'tools/netsim/proto')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync webrtc + libpng closure (attempt 14)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 14: manifest evidence for webrtc + libpng ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'webrtc|libpng' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match '^external/webrtc($|/)|^external/libpng($|/)' } | Select-Object -Unique)
+          Write-Output "WEBRTC-LIBPNG-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/webrtc', 'external/libpng') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 14 sentinel report ---'
+          $checks = @('external/webrtc/third_party/libyuv', 'external/webrtc/third_party/jsoncpp', 'external/libpng/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync google-breakpad closure (attempt 15)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 15: manifest evidence for google-breakpad ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'breakpad' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'breakpad' } | Select-Object -Unique)
+          Write-Output "BREAKPAD-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/google-breakpad') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 15 sentinel report ---'
+          $checks = @('external/google-breakpad/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync tinyobjloader closure (attempt 16)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 16: manifest evidence for tinyobjloader ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'tinyobjloader' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'tinyobjloader' } | Select-Object -Unique)
+          Write-Output "TINYOBJLOADER-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/tinyobjloader') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 16 sentinel report ---'
+          $checks = @('external/tinyobjloader/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync lz4 closure (attempt 17)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 17: manifest evidence for lz4 ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'lz4' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'lz4' } | Select-Object -Unique)
+          Write-Output "LZ4-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/lz4') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 17 sentinel report ---'
+          $checks = @('external/lz4/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync wpa_supplicant_8 closure (attempt 18)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 18: manifest evidence for wpa_supplicant ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'wpa_supplicant' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'wpa_supplicant' } | Select-Object -Unique)
+          Write-Output "WPA-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/wpa_supplicant_8') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 18 sentinel report ---'
+          $checks = @('external/wpa_supplicant_8/NOTICE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync curl closure (attempt 19)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 19: manifest evidence for curl ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'path="external/curl"' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @('external/curl')
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 19 sentinel report ---'
+          $checks = @('external/curl/NOTICE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync missing-source closure (attempt 20)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 20: manifest evidence for missing-source closure ---'
+          if (Test-Path .repo\manifests\default.xml) {
+            foreach ($p in @('external/libusb', 'external/dtc', 'external/nasm', 'external/googletest', 'external/google-benchmark', 'external/regex-re2', 'device/google/cuttlefish')) {
+              Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$p`"" | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+            }
+          } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @('external/libusb', 'external/dtc', 'external/nasm', 'external/googletest', 'external/google-benchmark', 'external/regex-re2', 'device/google/cuttlefish')
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 20 sentinel report ---'
+          $checks = @('external/libusb/libusb/core.c', 'external/dtc/libfdt/acpi.c', 'external/nasm/disasm/ndisasm.c', 'external/googletest/googletest/src/gtest-all.cc', 'external/google-benchmark/src/benchmark_api_internal.cc', 'external/regex-re2/re2/bitstate.cc', 'device/google/cuttlefish/host/commands/modem_simulator/call_service.cpp')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Configure attempt (only if a configure task exists)
+        shell: pwsh
+        timeout-minutes: 120
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          $cmakeDir = $null
+          $found = where.exe cmake 2>$null | Select-Object -First 1
+          if ($found) { $cmakeDir = Split-Path $found -Parent; Write-Output "SYSTEM-CMAKE: $found" }
+          else {
+            Write-Output 'No system cmake; installing via Chocolatey (fallback only).'
+            choco install cmake -y --no-progress 2>&1 | Select-Object -Last 10
+            $found = where.exe cmake 2>$null | Select-Object -First 1
+            if ($found) { $cmakeDir = Split-Path $found -Parent; Write-Output "CHOCO-CMAKE: $found" }
+            else { Write-Output 'CHOCO-CMAKE-NOT-FOUND: configure will still run so its log shows the None resolver.' }
+          }
+          if ($cmakeDir) { $env:Path = "$cmakeDir;$env:Path"; Write-Output "PATH-PREPEND-CMAKE: $cmakeDir" }
+          Write-Output '--- attempt 7: stage system cmake at the exact path the resolver reads ---'
+          Write-Output 'Resolver (aemu/tasks/configure.py, qemu ae9d18d): shutil.which("cmake", path=aosp/prebuilts/cmake/windows-x86/bin) — PATH is ignored.'
+          Write-Output 'Note (attempt 9): the stale repo sync of bare prebuilts/cmake was removed; it only printed "project prebuilts/cmake not found". The real path prebuilts/cmake/windows-x86 is synced by the attempt-8 step.'
+          $destBin = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin'
+          $destShare = 'C:\emu-master-dev\prebuilts\cmake\windows-x86\share'
+          if (-not (Test-Path "$destBin\cmake.exe")) {
+            $sysCmake = where.exe cmake 2>$null | Select-Object -First 1
+            if (-not $sysCmake) { Write-Output 'NO-SYSTEM-CMAKE-TO-STAGE'; exit 1 }
+            $sysDir = Split-Path $sysCmake -Parent
+            New-Item -ItemType Directory -Force -Path $destBin | Out-Null
+            Copy-Item "$sysDir\*" $destBin -Recurse -Force
+            $sysShare = Join-Path (Split-Path $sysDir -Parent) 'share'
+            if (Test-Path $sysShare) { New-Item -ItemType Directory -Force -Path $destShare | Out-Null; Copy-Item "$sysShare\*" $destShare -Recurse -Force }
+            Write-Output "STAGED-CMAKE-FROM: $sysCmake -> $destBin"
+          } else { Write-Output "PREBUILT-CMAKE-ALREADY-PRESENT: $destBin\cmake.exe" }
+          & "$destBin\cmake.exe" --version 2>&1 | Select-Object -First 2
+          python -c "import shutil; print('RESOLVER-PROBE:', shutil.which('cmake', path=r'C:\emu-master-dev\prebuilts\cmake\windows-x86\bin'))"
+          Write-Output '--- ninja on PATH (cmake -G Ninja will need it next) ---'
+          where.exe ninja 2>&1 | Select-Object -First 3
+          Set-Location C:\emu-master-dev\external\qemu
+          $list = cmd /c android\rebuild.cmd --ccache none --task-list 2>&1 | Out-String
+          Write-Output $list
+          if ($list -match 'No visual studio') { Write-Output 'VS-DISCOVERY-BLOCKED'; exit 1 }
+          $entries = ($list -split "`n") | Where-Object { $_ -notmatch 'cmake\.py' }
+          $joined = $entries -join "`n"
+          $task = $null
+          foreach ($name in @('cmake', 'configure', 'config')) {
+            if ($joined -match "(?m)^\s*$name\s*(:|$)") { $task = $name; break }
+          }
+          if (-not $task) { Write-Output 'NO-CONFIGURE-TASK-FOUND'; exit 0 }
+          Write-Output "Running configure task: $task"
+          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_backend --task $task
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Compile backend (parent-only, verified invocation)
+        shell: pwsh
+        timeout-minutes: 300
+        run: |
+          Set-Location C:\emu-master-dev\external\qemu
+          Get-PSDrive C | Select-Object Used, Free
+          if (-not (Test-Path C:\emu-master-dev\external\qemu\objs)) { Write-Output 'NO-OBJS-DIR-AFTER-CONFIGURE'; exit 1 }
+          Write-Output '--- ninja check (same as Configure step) ---'
+          where.exe ninja 2>&1 | Select-Object -First 3
+          Write-Output '--- Compile with the verified feature flag (Configure already ran with it in the previous step) ---'
+          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_backend --task compile
+          if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
+          Write-Output 'COMPILE-OK'
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Locate libgfxstream_backend.dll
+        shell: pwsh
+        run: |
+          $found = Get-ChildItem C:\emu-master-dev\external\qemu\objs -Recurse -Filter libgfxstream_backend.dll -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          Write-Output "FOUND-COUNT: $($found.Count)"
+          foreach ($f in $found) { $item = Get-Item $f; Write-Output "$f $($item.Length)" }
+          if (-not $found) { Write-Output 'DLL-NOT-FOUND-UNDER-OBJS'; Get-ChildItem C:\emu-master-dev\external\qemu\objs -ErrorAction SilentlyContinue | Select-Object Name; exit 1 }
+          $preferred = $found | Where-Object { $_ -like '*distribution*emulator*' } | Select-Object -First 1
+          if (-not $preferred) { $preferred = $found | Select-Object -First 1 }
+          Write-Output "DLL-SELECTED: $preferred"
+          Copy-Item $preferred "$env:GITHUB_WORKSPACE\libgfxstream_backend.dll" -Force
+          $item = Get-Item "$env:GITHUB_WORKSPACE\libgfxstream_backend.dll"
+          Write-Output "DLL-SIZE: $($item.Length)"
+          (Get-FileHash "$env:GITHUB_WORKSPACE\libgfxstream_backend.dll" -Algorithm SHA256).Hash
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Upload libgfxstream_backend.dll artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgfxstream_backend-parentonly
+          path: libgfxstream_backend.dll
+          if-no-files-found: error
+          retention-days: 30
