@@ -867,6 +867,38 @@ jobs:
           $checks = @('external/libusb/libusb/core.c', 'external/dtc/libfdt/acpi.c', 'external/nasm/disasm/ndisasm.c', 'external/googletest/googletest/src/gtest-all.cc', 'external/google-benchmark/src/benchmark_api_internal.cc', 'external/regex-re2/re2/bitstate.cc', 'device/google/cuttlefish/host/commands/modem_simulator/call_service.cpp')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
+      - name: Sync rootcanal/Bluetooth closure (attempt 21)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 21: Stage 2 run 41339056008 failed at Compile (step 27) in ~3s, NOT disk (5.6 GB free) ---'
+          Write-Output 'ninja: error: C:/emu-master-dev/packages/modules/Bluetooth/tools/rootcanal/proto/rootcanal/configuration.proto, needed by android/third_party/netsim_proto/rootcanal/configuration.grpc.pb.cc, missing and no known rule to make it'
+          Write-Output 'Configure passed; this file is only checked at build time, so it is the same partial-sync cause as attempts 13-20, one tree further.'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'packages/modules/Bluetooth|rootcanal' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'packages/modules/Bluetooth' } | Select-Object -Unique)
+          Write-Output "BLUETOOTH-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('packages/modules/Bluetooth') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if (-not $mname) { $mname = 'platform/packages/modules/Bluetooth' }
+              Write-Output "--- fallback: shallow clone $mname -> $c ---"
+              git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+              Write-Output "git clone $c exit code: $LASTEXITCODE"
+            }
+          }
+          Write-Output '--- attempt 21 sentinel report ---'
+          $checks = @('packages/modules/Bluetooth/tools/rootcanal/proto/rootcanal/configuration.proto')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          if (Test-Path 'packages/modules/Bluetooth/tools/rootcanal/proto/rootcanal') { Get-ChildItem 'packages/modules/Bluetooth/tools/rootcanal/proto/rootcanal' | Select-Object -First 20 Name }
+          if (-not (Test-Path 'packages/modules/Bluetooth/tools/rootcanal/proto/rootcanal/configuration.proto')) { Write-Output 'ROOTCANAL-CONFIGURATION-PROTO-STILL-MISSING: Compile would fail with the same ninja error; failing fast here instead of after a full sync+configure.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
