@@ -826,11 +826,11 @@ jobs:
           Get-PSDrive C | Select-Object Used, Free
           Write-Output '--- attempt 20: manifest evidence for missing-source closure ---'
           if (Test-Path .repo\manifests\default.xml) {
-            foreach ($p in @('external/libusb' 'external/dtc' 'external/nasm' 'external/googletest' 'external/google-benchmark' 'external/regex-re2' 'device/google/cuttlefish')) {
+            foreach ($p in @('external/libusb', 'external/dtc', 'external/nasm', 'external/googletest', 'external/google-benchmark', 'external/regex-re2', 'device/google/cuttlefish')) {
               Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$p`"" | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
             }
           } else { Write-Output 'NO-DEFAULT-XML' }
-          $cands = @('external/libusb' 'external/dtc' 'external/nasm' 'external/googletest' 'external/google-benchmark' 'external/regex-re2' 'device/google/cuttlefish')
+          $cands = @('external/libusb', 'external/dtc', 'external/nasm', 'external/googletest', 'external/google-benchmark', 'external/regex-re2', 'device/google/cuttlefish')
           foreach ($c in $cands) {
             Write-Output "--- repo sync $c ---"
             repo sync -j 4 $c 2>&1 | Select-Object -Last 5
@@ -847,7 +847,7 @@ jobs:
             }
           }
           Write-Output '--- attempt 20 sentinel report ---'
-          $checks = @('external/libusb/libusb/core.c' 'external/dtc/libfdt/acpi.c' 'external/nasm/disasm/ndisasm.c' 'external/googletest/googletest/src/gtest-all.cc' 'external/google-benchmark/src/benchmark_api_internal.cc' 'external/regex-re2/re2/bitstate.cc' 'device/google/cuttlefish/host/commands/modem_simulator/call_service.cpp')
+          $checks = @('external/libusb/libusb/core.c', 'external/dtc/libfdt/acpi.c', 'external/nasm/disasm/ndisasm.c', 'external/googletest/googletest/src/gtest-all.cc', 'external/google-benchmark/src/benchmark_api_internal.cc', 'external/regex-re2/re2/bitstate.cc', 'device/google/cuttlefish/host/commands/modem_simulator/call_service.cpp')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
