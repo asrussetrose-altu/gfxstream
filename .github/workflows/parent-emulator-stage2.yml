@@ -1,3 +1,20 @@
+# REVISION attempt 24 (2026-11-02 04:50 PKT): attempt 23 run 41357179804
+# FAILED at step 31 Compile, [7520/10861], ~55 min in:
+#   ninja: error: WriteFile(CMakeFiles\qemu-system-armel-headless.rsp):
+#   Unable to write to the file. No space left on device
+# Free disk: 86,996,062,208 before sync -> 5,464,535,040 after
+# sync+configure. The gfxstream_backend feature is "plus everything
+# else" (attempt 23 step 12 feature list), so Compile built the
+# full 10,861-step install (all qemu-system binaries, Qt, webengine)
+# and never reached a gfxstream target. This attempt changes ONLY
+# the feature flag in the two live invocations (Configure + Compile)
+# to gfxstream_only ("Build only gfxstream", same feature list).
+# Sync steps, C:\e root, and the recursive objs Locate step are
+# unchanged. Discriminating test only: if a DLL appears, the
+# 349/349 export comparison is still the judge; a narrower DLL
+# lacking android_* exports fails it, and the full-build disk
+# blocker then becomes a paid/self-hosted decision for the user.
+# No paid runner is enabled by this attempt.
 name: Parent emulator DLL - Stage 2 parent-only build
 # STAGE 2 PARENT-ONLY (user-approved 2026-11-01 23:52 PKT, "do whatever is best, just give me a working DLL").
 # Built fresh from the proven Stage 1 workflow (run 41294347461, main 500f2d9, 27/27 steps, Configure passed).
@@ -984,7 +1001,7 @@ jobs:
           }
           if (-not $task) { Write-Output 'NO-CONFIGURE-TASK-FOUND'; exit 0 }
           Write-Output "Running configure task: $task"
-          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_backend --task $task
+          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_only --task $task
           Get-PSDrive C | Select-Object Used, Free
       - name: Diagnose EGL include path (attempt 22, report only)
         shell: pwsh
@@ -1010,7 +1027,7 @@ jobs:
           Write-Output '--- ninja check (same as Configure step) ---'
           where.exe ninja 2>&1 | Select-Object -First 3
           Write-Output '--- Compile with the verified feature flag (Configure already ran with it in the previous step) ---'
-          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_backend --task compile
+          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_only --task compile
           if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
           Write-Output 'COMPILE-OK'
           Get-PSDrive C | Select-Object Used, Free
