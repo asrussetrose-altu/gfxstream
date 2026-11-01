@@ -734,6 +734,35 @@ jobs:
           $checks = @('external/tinyobjloader/LICENSE')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
+      - name: Sync lz4 closure (attempt 17)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 17: manifest evidence for lz4 ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'lz4' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'lz4' } | Select-Object -Unique)
+          Write-Output "LZ4-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/lz4') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 17 sentinel report ---'
+          $checks = @('external/lz4/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
