@@ -1,4 +1,22 @@
 name: Parent emulator DLL - Stage 1 configure only
+# REVISION attempt 15 (run 41277174163, main 176824b, FAILED at step 20
+# Configure after steps 1-19 ALL succeeded, incl. the attempt-14
+# webrtc+libpng closure): attempt 14 WORKED for its targets - Configure
+# ran through gfxstream subdirectories and Qt to the final
+# license-validation step, then failed on ONE missing file from the
+# same partial-sync cause:
+#   external/google-breakpad/LICENSE (FileNotFoundError in
+#   android/build/python/aemu/licensing.py, via CMakeLists.txt:1067
+#   finalize_all_licenses; path C:/emu-master-dev/external/qemu/../
+#   google-breakpad/LICENSE, i.e. external/google-breakpad/LICENSE)
+# This revision therefore adds a step BEFORE Configure that (1) prints
+# every manifest line for breakpad, (2) repo-syncs each candidate
+# project path matching breakpad, (3) falls back to a shallow clone
+# of the manifest-named repo for any path still absent, and (4)
+# prints a sentinel report for external/google-breakpad/LICENSE,
+# WITHOUT failing fast - Configure is the judge.
+# Disk was ~2.6 GB free at the end of attempt 14, so the step also
+# reports disk before/after.
 # REVISION attempt 14 (run 41143970411, main 515daa8, FAILED at step 19
 # Configure after steps 1-18 ALL succeeded, incl. the attempt-13
 # third-party closure): attempt 13 WORKED for its targets — all its
@@ -656,6 +674,35 @@ jobs:
           }
           Write-Output '--- attempt 14 sentinel report ---'
           $checks = @('external/webrtc/third_party/libyuv', 'external/webrtc/third_party/jsoncpp', 'external/libpng/LICENSE')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Sync google-breakpad closure (attempt 15)
+        shell: pwsh
+        run: |
+          Set-Location C:\emu-master-dev
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 15: manifest evidence for google-breakpad ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'breakpad' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          $cands = @(Select-String -Path .repo\manifests\default.xml -Pattern 'path="([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value } | Where-Object { $_ -match 'breakpad' } | Select-Object -Unique)
+          Write-Output "BREAKPAD-CANDIDATES: $($cands -join ', ')"
+          if ($cands.Count -eq 0) { $cands = @('external/google-breakpad') }
+          foreach ($c in $cands) {
+            Write-Output "--- repo sync $c ---"
+            repo sync -j 4 $c 2>&1 | Select-Object -Last 5
+            Write-Output "repo sync $c exit code: $LASTEXITCODE"
+            if (-not (Test-Path $c)) {
+              $mline = Select-String -Path .repo\manifests\default.xml -Pattern "path=`"$c`"" | Select-Object -First 1
+              $mname = $null
+              if ($mline -and ($mline.Line -match 'name="([^"]+)"')) { $mname = $Matches[1] }
+              if ($mname) {
+                Write-Output "--- fallback: shallow clone $mname -> $c ---"
+                git clone --depth 1 "https://android.googlesource.com/$mname" $c 2>&1 | Select-Object -Last 5
+                Write-Output "git clone $c exit code: $LASTEXITCODE"
+              } else { Write-Output "NO-MANIFEST-NAME for $c, no clone fallback" }
+            }
+          }
+          Write-Output '--- attempt 15 sentinel report ---'
+          $checks = @('external/google-breakpad/LICENSE')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
