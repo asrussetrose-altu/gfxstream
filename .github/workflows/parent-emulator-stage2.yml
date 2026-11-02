@@ -1,3 +1,10 @@
+# Attempt 33 (2026-11-02 12:55 PKT): run 41406239776 FAILED
+# step 39 Compile only on unrelated links after the backend DLL
+# itself linked at [384/436] (OpenglRender unittests: Rpcrt4
+# symbols; flatc: CRT symbols). Fix (workflow-only): if compile
+# exits non-zero but libgfxstream_backend.dll exists under objs,
+# continue to Locate/Upload; fail as before if no DLL exists.
+# No fork source change, no gate change, no DLL install.
 # Attempt 32 (2026-11-02 12:20 PKT): run 41401922592 FAILED step 38 Compile at link only
 # (382/436 objects built): lld-link undefined symbol emuglConfig_get_vulkan_runtime_full_path,
 # referenced by gfxstream-gl-host-common NativeGpuInfo_windows.cpp badVulkanDllVersion.
@@ -1306,8 +1313,14 @@ jobs:
           Write-Output '--- attempt 27 diagnostic: build.ninja vulkan-server lines ---'
           if (Test-Path 'objs\build.ninja') { Select-String -Path 'objs\build.ninja' -Pattern 'BorrowedImageVk' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" }; Select-String -Path 'objs\build.ninja' -Pattern 'Werror|Wc\+\+98' | Select-Object -First 10 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE-DIAG' }
           cmd /c android\rebuild.cmd --ccache none --gfxstream_only --feature gfxstream_only --task compile
-          if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
-          Write-Output 'COMPILE-OK'
+          $compileCode = $LASTEXITCODE
+          if ($compileCode -eq 0) { Write-Output 'COMPILE-OK' }
+          else {
+            Write-Output "COMPILE-EXIT-CODE: $compileCode"
+            $dllCheck = Get-ChildItem C:\e\external\qemu\objs -Recurse -Filter libgfxstream_backend.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($dllCheck) { Write-Output "COMPILE-PARTIAL-BACKEND-DLL-PRESENT: $($dllCheck.FullName) $($dllCheck.Length) bytes; backend linked before unrelated unittest/tool link failures, continuing to Locate/Upload" }
+            else { Write-Output 'COMPILE-FAILED-NO-DLL'; exit 1 }
+          }
           Get-PSDrive C | Select-Object Used, Free
       - name: Locate libgfxstream_backend.dll
         shell: pwsh
