@@ -1056,7 +1056,7 @@ jobs:
           where.exe ninja 2>&1 | Select-Object -First 3
           Write-Output '--- Compile with the verified feature flag (Configure already ran with it in the previous step) ---'
           Write-Output '--- attempt 25 report-only: did gfxstream_only prune build.ninja? ---'
-          if (Test-Path 'external\qemu\objs\build.ninja') { $n = (Select-String -Path 'external\qemu\objs\build.ninja' -Pattern '^build ' | Measure-Object).Count; Write-Output "BUILD-NINJA-TARGETS: $n (full build was 10861)"; Select-String -Path 'external\qemu\objs\build.ninja' -Pattern 'gfxstream_backend' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE' }
+          if (Test-Path 'objs\build.ninja') { $n = (Select-String -Path 'objs\build.ninja' -Pattern '^build ' | Measure-Object).Count; Write-Output "BUILD-NINJA-TARGETS: $n (full build was 10861)"; Select-String -Path 'objs\build.ninja' -Pattern 'gfxstream_backend' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE' }
           cmd /c android\rebuild.cmd --ccache none --gfxstream_only --feature gfxstream_only --task compile
           if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
           Write-Output 'COMPILE-OK'
