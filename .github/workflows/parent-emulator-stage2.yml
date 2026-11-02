@@ -1,3 +1,10 @@
+# Attempt 27 (2026-11-02 09:0x PKT): run 41383536597 FAILED at step 32 Compile, [200/436], NOT disk (5.57 GB free).
+#   Only 5 files failed, all in gfxstream-vulkan-server (BorrowedImageVk, DeviceLostHelper, BufferVk, ColorBufferVk, CompositorVk),
+#   all with [-Werror,-Wc++98-compat]: GLM/vulkan headers and BorrowedImage.h use C++11+ features flagged as C++98-incompatible.
+#   Configure passed, so this is a warning-as-error for that target, not missing sources. Fix is workflow-only, synced-tree-only:
+#   a new step before Configure prints the synced vulkan CMakeLists compile options, then appends
+#   -Wno-c++98-compat / -Wno-c++98-compat-pedantic / -Wno-error=... to gfxstream-vulkan-server (multiple CMake calls accumulate).
+#   No fork source change, no gate change. Compile step also prints build.ninja lines for BorrowedImageVk before rebuilding.
 # REVISION attempt 26 (2026-11-02 08:20 PKT): attempt 25 run 41378832010
 # FAILED at step 29 Configure (all 28 sync steps passed) with a NEW error:
 #   CMake Error at third-party/CMakeLists.txt:239 (message):
@@ -1026,6 +1033,25 @@ jobs:
           $checks = @('hardware\google\gfxstream\third-party\CMakeLists.txt', 'external\libdrm', 'external\libdrm\include\xf86drm.h', 'external\libdrm\xf86drm.h')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
+      - name: Attempt 27 diagnose and suppress cxx98-compat for vulkan-server
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Write-Output '--- attempt 27: vulkan-server compile options in synced tree ---'
+          $vk = 'hardware\google\gfxstream\host\vulkan\CMakeLists.txt'
+          if (Test-Path $vk) { Select-String -Path $vk -Pattern 'Werror|Wc\+\+98|Wall|target_compile_options' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-VULKAN-CMAKELISTS' }
+          Write-Output '--- Werror occurrences in synced gfxstream CMakeLists ---'
+          Get-ChildItem hardware\google\gfxstream -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'Werror' | Select-Object -First 20 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          if (Test-Path $vk) {
+            $raw = Get-Content $vk -Raw
+            if ($raw -match '-Wno-c\+\+98-compat') { Write-Output 'PATCH-ALREADY-PRESENT' }
+            elseif ($raw -match 'target_compile_options\(gfxstream-vulkan-server') {
+              Add-Content $vk "`n# Attempt 27 (workflow-only, synced tree only): cxx98-compat warnings are not real errors in C++17 code; suppress them for vulkan-server so -Werror does not stop the build on GLM/vulkan headers.`ntarget_compile_options(gfxstream-vulkan-server PRIVATE -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-error=c++98-compat -Wno-error=c++98-compat-pedantic)`n"
+              Write-Output 'PATCH-APPLIED-VULKAN-CMAKELISTS'
+            } else { Write-Output 'PATCH-NOT-APPLICABLE-NO-TARGET-BLOCK' }
+            Select-String -Path $vk -Pattern 'c\+\+98-compat' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
+          }
+          Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
         timeout-minutes: 120
@@ -1101,6 +1127,8 @@ jobs:
           Write-Output '--- Compile with the verified feature flag (Configure already ran with it in the previous step) ---'
           Write-Output '--- attempt 25 report-only: did gfxstream_only prune build.ninja? ---'
           if (Test-Path 'objs\build.ninja') { $n = (Select-String -Path 'objs\build.ninja' -Pattern '^build ' | Measure-Object).Count; Write-Output "BUILD-NINJA-TARGETS: $n (full build was 10861)"; Select-String -Path 'objs\build.ninja' -Pattern 'gfxstream_backend' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE' }
+          Write-Output '--- attempt 27 diagnostic: build.ninja vulkan-server lines ---'
+          if (Test-Path 'objs\build.ninja') { Select-String -Path 'objs\build.ninja' -Pattern 'BorrowedImageVk' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" }; Select-String -Path 'objs\build.ninja' -Pattern 'Werror|Wc\+\+98' | Select-Object -First 10 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE-DIAG' }
           cmd /c android\rebuild.cmd --ccache none --gfxstream_only --feature gfxstream_only --task compile
           if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
           Write-Output 'COMPILE-OK'
