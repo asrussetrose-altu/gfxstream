@@ -57,6 +57,7 @@ using gl::EmulatedEglFenceSync;
 using gl::GLES_DISPATCH_MAX_VERSION_2;
 using gl::GLES_DISPATCH_MAX_VERSION_3_0;
 using gl::GLES_DISPATCH_MAX_VERSION_3_1;
+using gl::GLES_DISPATCH_MAX_VERSION_3_2;
 using gl::GLESApi;
 using gl::GLESApi_CM;
 using gl::GLESDispatchMaxVersion;
@@ -191,10 +192,11 @@ static const char* kDma1Str = "ANDROID_EMU_dma_v1";
 static const char* kDma2Str = "ANDROID_EMU_dma_v2";
 static const char* kDirectMemStr = "ANDROID_EMU_direct_mem";
 
-// GLESDynamicVersion: up to 3.1 so far
+// GLESDynamicVersion: up to 3.2 so far
 static const char* kGLESDynamicVersion_2 = "ANDROID_EMU_gles_max_version_2";
 static const char* kGLESDynamicVersion_3_0 = "ANDROID_EMU_gles_max_version_3_0";
 static const char* kGLESDynamicVersion_3_1 = "ANDROID_EMU_gles_max_version_3_1";
+static const char* kGLESDynamicVersion_3_2 = "ANDROID_EMU_gles_max_version_3_2";
 
 // HWComposer Host Composition
 static const char* kHostCompositionV1 = "ANDROID_EMU_host_composition_v1";
@@ -370,6 +372,8 @@ const char* maxVersionToFeatureString(GLESDispatchMaxVersion version) {
             return kGLESDynamicVersion_3_0;
         case GLES_DISPATCH_MAX_VERSION_3_1:
             return kGLESDynamicVersion_3_1;
+        case GLES_DISPATCH_MAX_VERSION_3_2:
+            return kGLESDynamicVersion_3_2;
         default:
             return kGLESDynamicVersion_2;
     }
@@ -690,6 +694,9 @@ static EGLint rcGetGLString(EGLenum name, void* buffer, EGLint bufferSize) {
                 break;
             case GLES_DISPATCH_MAX_VERSION_3_1:
                 glStr = replaceESVersionString(glStr, "3.1");
+                break;
+            case GLES_DISPATCH_MAX_VERSION_3_2:
+                glStr = replaceESVersionString(glStr, "3.2");
                 break;
             default:
                 break;

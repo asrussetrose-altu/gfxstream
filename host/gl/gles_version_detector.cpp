@@ -17,6 +17,7 @@
 #include "gles_version_detector.h"
 
 #include <algorithm>
+#include <cstdio>
 
 #include "OpenGLESDispatch/EGLDispatch.h"
 #include "gfxstream/strings.h"
@@ -29,6 +30,21 @@ namespace gfxstream {
 namespace host {
 namespace gl {
 
+// GLES 3.2 capability gate (takeover, 2026-10-30).
+// Two checks are required before GLES 3.2 may be advertised:
+//   1. Host check: the actual EGL backend can create a GLES 3.2 context.
+//   2. Translator check: every required GLES 3.2 operation is implemented
+//      and correctly dispatched by the translator.
+// Check 1 exists in this file. Check 2 does NOT pass yet: the translator
+// audit on branch gles32-negotiation shows version enum, EGL interface
+// registration, context validation, dispatch loading/clearing, and
+// capability reporting all stop at 3.1. Until those are connected and
+// validated, this gate stays OFF and the advertised maximum is capped
+// at 3.1, with a diagnostic reason printed to stderr.
+static bool translatorSupportsGLES32() {
+    return false;
+}
+
 using gfxstream::HasExtension;
 
 // Config + context attributes to query the underlying OpenGL if it is
@@ -40,6 +56,10 @@ static const EGLint gles3ConfigAttribs[] =
 
 static const EGLint pbufAttribs[] =
     { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+
+static const EGLint gles32Attribs[] =
+   { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
+     EGL_CONTEXT_MINOR_VERSION_KHR, 2, EGL_NONE };
 
 static const EGLint gles31Attribs[] =
    { EGL_CONTEXT_MAJOR_VERSION_KHR, 3,
@@ -61,6 +81,9 @@ static bool sTryContextCreation(EGLDisplay dpy, GLESDispatchMaxVersion ver) {
     switch (ver) {
     case GLES_DISPATCH_MAX_VERSION_3_0:
         contextAttribs = gles30Attribs;
+        break;
+    case GLES_DISPATCH_MAX_VERSION_3_2:
+        contextAttribs = gles32Attribs;
         break;
     case GLES_DISPATCH_MAX_VERSION_3_1:
         contextAttribs = gles31Attribs;
@@ -98,28 +121,40 @@ static bool sTryContextCreation(EGLDisplay dpy, GLESDispatchMaxVersion ver) {
 
 GLESDispatchMaxVersion calcMaxVersionFromDispatch(const gfxstream::host::FeatureSet& features,
                                                   EGLDisplay dpy) {
-    // TODO: 3.1 is the highest
-    GLESDispatchMaxVersion maxVersion =
-       GLES_DISPATCH_MAX_VERSION_3_1;
+    const auto renderer = get_gfxstream_renderer();
+    const bool usesEglMaxVersionQuery =
+        renderer == SELECTED_RENDERER_HOST ||
+        renderer == SELECTED_RENDERER_SWIFTSHADER_INDIRECT ||
+        renderer == SELECTED_RENDERER_LAVAPIPE ||
+        renderer == SELECTED_RENDERER_ANGLE_INDIRECT;
 
-    if (get_gfxstream_renderer() == SELECTED_RENDERER_HOST
-        || get_gfxstream_renderer() == SELECTED_RENDERER_SWIFTSHADER_INDIRECT
-        || get_gfxstream_renderer() == SELECTED_RENDERER_LAVAPIPE
-        || get_gfxstream_renderer() == SELECTED_RENDERER_ANGLE_INDIRECT) {
-        if (s_egl.eglGetMaxGLESVersion) {
-            maxVersion =
-                (GLESDispatchMaxVersion)s_egl.eglGetMaxGLESVersion(dpy);
+    const bool allowGLES32 = translatorSupportsGLES32();
+
+    if (usesEglMaxVersionQuery && s_egl.eglGetMaxGLESVersion) {
+        const auto queried =
+            static_cast<GLESDispatchMaxVersion>(s_egl.eglGetMaxGLESVersion(dpy));
+        if (queried < GLES_DISPATCH_MAX_VERSION_3_2 || allowGLES32) {
+            return queried;
         }
-    } else {
-        if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
-            maxVersion = GLES_DISPATCH_MAX_VERSION_3_0;
-            if (!sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_0)) {
-                maxVersion = GLES_DISPATCH_MAX_VERSION_2;
-            }
-        }
+        std::fprintf(stderr,
+                     "gfxstream: GLES 3.2 gated off: "
+                     "translator_gles32_not_implemented; "
+                     "falling back to GLES 3.1\n");
     }
 
-    return maxVersion;
+    // Probe from highest to lowest. Never advertise a version solely because
+    // it exists in the enum: the backend must successfully create that context.
+    if (allowGLES32 &&
+        sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_2)) {
+        return GLES_DISPATCH_MAX_VERSION_3_2;
+    }
+    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_1)) {
+        return GLES_DISPATCH_MAX_VERSION_3_1;
+    }
+    if (sTryContextCreation(dpy, GLES_DISPATCH_MAX_VERSION_3_0)) {
+        return GLES_DISPATCH_MAX_VERSION_3_0;
+    }
+    return GLES_DISPATCH_MAX_VERSION_2;
 }
 
 // For determining whether or not to use core profile OpenGL.
