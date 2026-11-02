@@ -1,3 +1,31 @@
+# REVISION attempt 25 (2026-11-02 06:40 PKT): attempt 24 run 41364438022
+# FAILED at step 31 Compile, [7525/10861], ~55 min in:
+#   LLVM ERROR: IO failure on output stream: No space left on device
+#   linking qemu/windows-x86_64/qemu-system-aarch64.exe (lld-link).
+#   Free disk: 87,208,263,680 at job start -> 5,488,279,552 at Compile
+#   start -> 5,488,140,288 after failure (partial link output deleted
+#   on failure, so the post-failure reading looks unchanged; the
+#   link itself ran out of room writing the exe/PDB).
+# ROOT CAUSE FOUND IN ATTEMPT 24 LOG, not disk alone: attempt 24
+# passed "--feature gfxstream_only", but cmake.py (step 13 dump,
+# get_tasks) has a SEPARATE boolean flag "--gfxstream_only"
+# (dest=gfxstream_only, "Build only gfxstream libs/tests") that
+# ConfigureTask receives and that gates the test tasks. The
+# --feature name alone did NOT prune anything: Compile still ran
+# cmake --build objs --target install with 10861 targets, exactly
+# like the full gfxstream_backend build, and linked every
+# qemu-system-* exe. Attempt 24 therefore never actually tested
+# gfxstream_only.
+# This attempt changes ONLY the two live invocations (Configure +
+# Compile) to pass BOTH flags: --gfxstream_only (the boolean that
+# ConfigureTask actually reads) plus --feature gfxstream_only
+# (already proven harmless at Configure in attempt 24). It also
+# adds a report-only target count after Configure is done, inside
+# the Compile step before rebuild runs, so the next check can see
+# from the log whether the build.ninja target count dropped below
+# 10861 without waiting for a disk failure. Sync steps, C:\e root,
+# and the recursive objs Locate step are unchanged. No paid runner,
+# no self-hosted runner, no overlay, no gate change.
 # REVISION attempt 24 (2026-11-02 04:50 PKT): attempt 23 run 41357179804
 # FAILED at step 31 Compile, [7520/10861], ~55 min in:
 #   ninja: error: WriteFile(CMakeFiles\qemu-system-armel-headless.rsp):
@@ -1001,7 +1029,7 @@ jobs:
           }
           if (-not $task) { Write-Output 'NO-CONFIGURE-TASK-FOUND'; exit 0 }
           Write-Output "Running configure task: $task"
-          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_only --task $task
+          cmd /c android\rebuild.cmd --ccache none --gfxstream_only --feature gfxstream_only --task $task
           Get-PSDrive C | Select-Object Used, Free
       - name: Diagnose EGL include path (attempt 22, report only)
         shell: pwsh
@@ -1027,7 +1055,9 @@ jobs:
           Write-Output '--- ninja check (same as Configure step) ---'
           where.exe ninja 2>&1 | Select-Object -First 3
           Write-Output '--- Compile with the verified feature flag (Configure already ran with it in the previous step) ---'
-          cmd /c android\rebuild.cmd --ccache none --feature gfxstream_only --task compile
+          Write-Output '--- attempt 25 report-only: did gfxstream_only prune build.ninja? ---'
+          if (Test-Path 'external\qemu\objs\build.ninja') { $n = (Select-String -Path 'external\qemu\objs\build.ninja' -Pattern '^build ' | Measure-Object).Count; Write-Output "BUILD-NINJA-TARGETS: $n (full build was 10861)"; Select-String -Path 'external\qemu\objs\build.ninja' -Pattern 'gfxstream_backend' | Select-Object -First 5 | ForEach-Object { "$($_.LineNumber): $($_.Line)" } } else { Write-Output 'NO-BUILD-NINJA-BEFORE-COMPILE' }
+          cmd /c android\rebuild.cmd --ccache none --gfxstream_only --feature gfxstream_only --task compile
           if ($LASTEXITCODE -ne 0) { Write-Output "COMPILE-EXIT-CODE: $LASTEXITCODE"; exit 1 }
           Write-Output 'COMPILE-OK'
           Get-PSDrive C | Select-Object Used, Free
