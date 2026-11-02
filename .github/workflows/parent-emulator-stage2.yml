@@ -1,3 +1,10 @@
+# Attempt 32 (2026-11-02 12:20 PKT): run 41401922592 FAILED step 38 Compile at link only
+# (382/436 objects built): lld-link undefined symbol emuglConfig_get_vulkan_runtime_full_path,
+# referenced by gfxstream-gl-host-common NativeGpuInfo_windows.cpp badVulkanDllVersion.
+# Root cause: gfxstream's own emugl_config.cpp does not define it; the definition lives in
+# qemu aemu-gl-init, which the pruned gfxstream_only link does not include.
+# Fix (workflow-only, synced tree only): append a minimal extern C definition returning
+# "vulkan-1.dll" to the synced emugl_config.cpp before Compile. No fork change, no gate change.
 # Attempt 31 (2026-11-02 11:40 PKT): run 41397193113 FAILED
 # step 37 Compile at [304/436], SAME lz4cli threadpool.c.obj
 # free/calloc/malloc -Wimplicit-function-declaration errors as
@@ -1264,6 +1271,26 @@ jobs:
           if (-not $verify) { Write-Output 'UNCONDITIONAL-STDLIB-VERIFY-FAILED'; exit 1 }
           Write-Output 'UNCONDITIONAL-STDLIB-VERIFIED'
           Get-PSDrive C | Select-Object Used, Free
+      - name: Attempt 32 define vulkan runtime path stub in synced emugl_config (synced tree only)
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Write-Output '--- attempt 32: run 41401922592 failed step 38 Compile at link, lld-link undefined symbol emuglConfig_get_vulkan_runtime_full_path, referenced by NativeGpuInfo_windows.cpp badVulkanDllVersion; gfxstream own emugl_config.cpp does not define it, qemu aemu-gl-init version does and is not in the pruned gfxstream_only link ---'
+          $f = 'hardware\google\gfxstream\host\gl\gl-host-common\opengl\emugl_config.cpp'
+          if (-not (Test-Path $f)) { Write-Output 'NO-EMUGL-CONFIG-FOUND'; exit 1 }
+          $content = Get-Content $f -Raw
+          if ($content -match 'emuglConfig_get_vulkan_runtime_full_path\(\)') { Write-Output 'VULKAN-PATH-ALREADY-DEFINED'; exit 0 }
+          $stub = @'
+          // Attempt 32 (synced tree only): minimal definition for the one symbol the pruned gfxstream_only link is missing.
+          // Upstream qemu aemu-gl-init returns the emulator lib64/vulkan path; this stub returns the system vulkan-1.dll name,
+          // so badVulkanDllVersion version-checks the system runtime and, if it cannot be found, takes its existing not-blacklisted path.
+          // No fork source change, no gate change.
+          extern "C" const char* emuglConfig_get_vulkan_runtime_full_path() {
+              return "vulkan-1.dll";
+          }
+          '@
+          Set-Content $f ($content.TrimEnd() + "`r`n" + $stub + "`r`n")
+          Select-String -Path $f -Pattern 'emuglConfig_get_vulkan_runtime_full_path' | ForEach-Object { Write-Output "STUB-LINE: $($_.LineNumber)" }
       - name: Compile backend (parent-only, verified invocation)
         shell: pwsh
         timeout-minutes: 300
