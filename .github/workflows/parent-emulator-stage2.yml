@@ -1,3 +1,18 @@
+# Attempt 28 (2026-11-02 09:45 PKT): attempt 27 run 41386709407
+# FAILED at step 33 Compile (exit 1, ~53 s; all 28 sync steps +
+# Configure passed). Six vulkan-server objects failed
+# (BorrowedImageVk, DeviceLostHelper, BufferVk, ColorBufferVk,
+# CompositorVk, DeviceOpTracker). The attempt-27 c++98 suppression
+# WORKED (zero c++98 errors in the attempt-27 log); the failures are
+# a broader set of clang-19 warnings promoted by -Werror
+# (documentation, reserved-macro-identifier,
+# nonportable-system-include-path, thread-safety-*,
+# c++20-designator, old-style-cast, extra-semi, gnu-*,
+# language-extension-token, newline-eof, shadow-field).
+# Per-warning suppression would cost one ~38-min attempt per layer,
+# so this attempt demotes -Werror for vulkan-server only, in the
+# synced tree only (-Wno-error appended after the -Werror block).
+# No fork source change, no gate change, no DLL install.
 # Attempt 27 (2026-11-02 09:0x PKT): run 41383536597 FAILED at step 32 Compile, [200/436], NOT disk (5.57 GB free).
 #   Only 5 files failed, all in gfxstream-vulkan-server (BorrowedImageVk, DeviceLostHelper, BufferVk, ColorBufferVk, CompositorVk),
 #   all with [-Werror,-Wc++98-compat]: GLM/vulkan headers and BorrowedImage.h use C++11+ features flagged as C++98-incompatible.
@@ -1051,6 +1066,21 @@ jobs:
             } else { Write-Output 'PATCH-NOT-APPLICABLE-NO-TARGET-BLOCK' }
             Select-String -Path $vk -Pattern 'c\+\+98-compat' | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" }
           }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Attempt 28 demote Werror for vulkan-server
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Write-Output '--- attempt 28: attempt 27 run 41386709407 failed at step 33 Compile ---'
+          Write-Output 'Six vulkan-server objects failed, NOT c++98-compat (that suppression worked: zero c++98 errors in the attempt-27 log).'
+          Write-Output 'Failing classes under -Werror with prebuilt clang-r530567 (Clang 19): documentation, reserved-macro-identifier, nonportable-system-include-path, thread-safety-attributes/analysis, c++20-designator, old-style-cast, extra-semi, gnu-zero-variadic-macro-arguments, gnu-include-next, language-extension-token, newline-eof, shadow-field-in-constructor.'
+          Write-Output 'Fix (synced tree only, vulkan-server target only): append -Wno-error after the existing -Wall/-Werror block so warnings stop failing the build. No fork source change, no gate change.'
+          $vk = 'hardware\google\gfxstream\host\vulkan\CMakeLists.txt'
+          if (Test-Path $vk) {
+            Add-Content $vk "`n# Attempt 28 (workflow-only, synced tree only): clang 19 promotes many header/third-party warnings to errors under -Werror for vulkan-server; demote them for this target only (flag order: this appended call comes after the -Werror block, so it wins).`ntarget_compile_options(gfxstream-vulkan-server PRIVATE -Wno-error)`n"
+            Write-Output 'PATCH-APPLIED-WNO-ERROR-VULKAN'
+            Get-Content $vk | Select-Object -Last 5 | ForEach-Object { "$($_.Trim())" }
+          } else { Write-Output 'NO-VULKAN-CMAKELISTS'; exit 1 }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
