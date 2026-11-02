@@ -1,3 +1,18 @@
+# Attempt 31 (2026-11-02 11:40 PKT): run 41397193113 FAILED
+# step 37 Compile at [304/436], SAME lz4cli threadpool.c.obj
+# free/calloc/malloc -Wimplicit-function-declaration errors as
+# attempt 29's run. Root cause of the repeat: attempt 30's guard
+# ($lines -match 'stdlib\.h') matched the POSIX-branch include
+# (upstream line 267, inside #else, inactive on Windows) and
+# exited STDLIB-ALREADY-PRESENT without inserting anything, so
+# the _WIN32 branch (includes only windows.h) still has no
+# malloc/free/calloc declarations under clang-cl.
+# Fix (workflow-only, synced tree only): insert #include
+# <stdlib.h> unconditionally, before the first preprocessor
+# conditional; the guard counts ONLY an include above the first
+# #if/#elif/#else as present, and the step prints the file head
+# so the log proves the placement. No fork source change, no
+# gate change, no DLL install.
 # Attempt 30 (2026-11-02 10:55 PKT): run 41394070639 FAILED
 # step 36 Compile at [304/436], lz4cli threadpool.c.obj, hard
 # -Wimplicit-function-declaration errors for free/calloc/malloc
@@ -1211,6 +1226,43 @@ jobs:
           if ($idx -lt 0) { $lines = @('#include <stdlib.h>') + $lines } else { $lines = $lines[0..$idx] + '#include <stdlib.h>' + $lines[($idx + 1)..($lines.Count - 1)] }
           Set-Content $f $lines
           Select-String -Path $f -Pattern 'stdlib\.h' | ForEach-Object { Write-Output "STDLIB-INCLUDED-LINE: $($_.LineNumber)" }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Attempt 31 unconditional stdlib include for threadpool _WIN32 branch (synced tree only)
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Write-Output '--- attempt 31: attempt 30 run 41397193113 failed step 37 Compile at [304/436] with the SAME threadpool.c.obj errors, because attempt 30 exited STDLIB-ALREADY-PRESENT ---'
+          Write-Output 'Why: its guard matched the POSIX-branch #include <stdlib.h> (inside #else, inactive on Windows); the _WIN32 branch includes only windows.h and still lacks malloc/free/calloc under clang-cl.'
+          Write-Output 'Fix (synced tree only): insert #include <stdlib.h> unconditionally, before the first preprocessor conditional. No fork source change, no gate change.'
+          $f = 'external\lz4\programs\threadpool.c'
+          if (-not (Test-Path $f)) { Write-Output 'NO-THREADPOOL-C-FOUND'; exit 1 }
+          $lines = Get-Content $f
+          $condIdx = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b') { $condIdx = $i; break } }
+          if ($condIdx -lt 0) { $condIdx = $lines.Count }
+          $head = @()
+          if ($condIdx -gt 0) { $head = $lines[0..($condIdx - 1)] }
+          $uncond = $head | Where-Object { $_ -match '^\s*#include\s*<stdlib\.h>' }
+          if ($uncond) { Write-Output 'UNCONDITIONAL-STDLIB-ALREADY-PRESENT'; }
+          else {
+            $idx = -1
+            for ($i = 0; $i -lt $head.Count; $i++) { if ($head[$i] -match '^\s*#include') { $idx = $i; break } }
+            if ($idx -lt 0) { $lines = @('#include <stdlib.h>') + $lines } else { $lines = $lines[0..$idx] + '#include <stdlib.h>' + $lines[($idx + 1)..($lines.Count - 1)] }
+            Set-Content $f $lines
+            Write-Output 'UNCONDITIONAL-STDLIB-INSERTED'
+          }
+          Write-Output '--- all stdlib.h lines with numbers (proves placement vs conditionals) ---'
+          Select-String -Path $f -Pattern 'stdlib\.h' | ForEach-Object { Write-Output "STDLIB-LINE: $($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- first 35 lines of threadpool.c (include must appear here, above any #if) ---'
+          Get-Content $f -TotalCount 35 | ForEach-Object { Write-Output $_ }
+          $after = Get-Content $f
+          $condIdx2 = -1
+          for ($i = 0; $i -lt $after.Count; $i++) { if ($after[$i] -match '^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b') { $condIdx2 = $i; break } }
+          if ($condIdx2 -lt 0) { $condIdx2 = $after.Count }
+          $verify = @()
+          if ($condIdx2 -gt 0) { $verify = $after[0..($condIdx2 - 1)] | Where-Object { $_ -match '^\s*#include\s*<stdlib\.h>' } }
+          if (-not $verify) { Write-Output 'UNCONDITIONAL-STDLIB-VERIFY-FAILED'; exit 1 }
+          Write-Output 'UNCONDITIONAL-STDLIB-VERIFIED'
           Get-PSDrive C | Select-Object Used, Free
       - name: Compile backend (parent-only, verified invocation)
         shell: pwsh
