@@ -1,3 +1,17 @@
+# REVISION attempt 26 (2026-11-02 08:20 PKT): attempt 25 run 41378832010
+# FAILED at step 29 Configure (all 28 sync steps passed) with a NEW error:
+#   CMake Error at third-party/CMakeLists.txt:239 (message):
+#   LIBDRM is not found.
+# Attempt 24 configured from external/qemu, but attempt 25's real
+# --gfxstream_only boolean switched the configure source dir to
+# hardware/google/gfxstream, whose third-party CMakeLists demands LIBDRM.
+# The fork's own third_party has no LIBDRM check, so the guard must be
+# read from the synced tree, not guessed. This attempt adds ONE step
+# before Configure that prints third-party/CMakeLists.txt lines 200-260,
+# greps LIBDRM across the synced gfxstream tree, prints manifest drm
+# lines, repo-syncs the external/libdrm closure (shallow-clone fallback),
+# and reports sentinels WITHOUT failing fast - Configure is the judge.
+# No paid runner, no self-hosted runner, no overlay, no gate change.
 # REVISION attempt 25 (2026-11-02 06:40 PKT): attempt 24 run 41364438022
 # FAILED at step 31 Compile, [7525/10861], ~55 min in:
 #   LLVM ERROR: IO failure on output stream: No space left on device
@@ -981,6 +995,36 @@ jobs:
           $checks = @('external/angle/include/EGL/egl.h', 'external/angle/include/EGL/eglplatform.h', 'external/angle/include/KHR/khrplatform.h')
           foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           if (-not (Test-Path 'external/angle/include/EGL/egl.h')) { Write-Output 'ANGLE-EGL-HEADER-STILL-MISSING: Compile would fail with the same fatal error; failing fast here instead of after a full sync+configure.'; exit 1 }
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Diagnose LIBDRM check + sync libdrm closure (attempt 26)
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Get-PSDrive C | Select-Object Used, Free
+          Write-Output '--- attempt 26: Stage 2 run 41378832010 failed at step 29 Configure ---'
+          Write-Output 'CMake Error at third-party/CMakeLists.txt:239 (message): LIBDRM is not found.'
+          Write-Output 'Attempt 24 configured from external/qemu; attempt 25 --gfxstream_only switched the source dir to hardware/google/gfxstream, whose third-party CMakeLists demands LIBDRM.'
+          $tp = 'hardware\google\gfxstream\third-party\CMakeLists.txt'
+          $tu = 'hardware\google\gfxstream\third_party\CMakeLists.txt'
+          if (Test-Path $tp) { Write-Output "THIRD-PARTY-FILE: $tp"; Get-Content $tp | Select-Object -Skip 200 -First 60 | ForEach-Object { "$($_.Trim())" } }
+          elseif (Test-Path $tu) { Write-Output "THIRD-PARTY-FILE-UNDERSCORE: $tu"; Get-Content $tu | Select-Object -First 120 | ForEach-Object { "$($_.Trim())" } }
+          else { Write-Output 'NO-THIRD-PARTY-CMAKELISTS-UNDER-GFXSTREAM' }
+          Write-Output '--- LIBDRM references in synced gfxstream tree ---'
+          Get-ChildItem hardware\google\gfxstream -Filter *.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          Get-ChildItem hardware\google\gfxstream -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
+          Write-Output '--- manifest lines matching drm ---'
+          if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern 'drm' | Select-Object -First 20 | ForEach-Object { "$($_.LineNumber): $($_.Line.Trim())" } } else { Write-Output 'NO-DEFAULT-XML' }
+          Write-Output '--- repo sync external/libdrm ---'
+          repo sync -j 4 external/libdrm 2>&1 | Select-Object -Last 5
+          Write-Output "repo sync external/libdrm exit code: $LASTEXITCODE"
+          if (-not (Test-Path 'external\libdrm')) {
+            Write-Output '--- fallback: shallow clone platform/external/libdrm -> external/libdrm ---'
+            git clone --depth 1 "https://android.googlesource.com/platform/external/libdrm" external\libdrm 2>&1 | Select-Object -Last 5
+            Write-Output "git clone external/libdrm exit code: $LASTEXITCODE"
+          }
+          Write-Output '--- attempt 26 sentinel report (no fail-fast; Configure is the judge) ---'
+          $checks = @('hardware\google\gfxstream\third-party\CMakeLists.txt', 'external\libdrm', 'external\libdrm\include\xf86drm.h', 'external\libdrm\xf86drm.h')
+          foreach ($k in $checks) { Write-Output "SENTINEL ${k}: $(Test-Path $k)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Configure attempt (only if a configure task exists)
         shell: pwsh
