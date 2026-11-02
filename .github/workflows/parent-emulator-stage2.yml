@@ -1,3 +1,13 @@
+# Attempt 35 (2026-11-02 15:25 PKT): run 41423805573 FAILED
+# step 39 Compile even though it detected the linked DLL at
+# [383/436] (gfxstream_backend.dll, 8118784 bytes) and printed
+# COMPILE-PARTIAL-BACKEND-DLL-PRESENT. Root cause: the pwsh step
+# still exited 1 because $LASTEXITCODE from the failed rebuild
+# (unrelated OpenglRender/snapshot unittest and flatc links)
+# was never reset, so Locate/Upload were skipped. Fix
+# (workflow-only): reset $LASTEXITCODE to 0 when the backend DLL
+# is present, and again at the end of the Compile step. No fork
+# source change, no gate change, no DLL install.
 # Attempt 34 (2026-11-02 14:45 PKT): run 41417790928 FAILED
 # step 39 Compile with COMPILE-FAILED-NO-DLL after the backend
 # linked at [382/436] as gfxstream_backend.dll. Root cause: the
@@ -1327,10 +1337,11 @@ jobs:
           else {
             Write-Output "COMPILE-EXIT-CODE: $compileCode"
             $dllCheck = Get-ChildItem C:\e\external\qemu\objs -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'libgfxstream_backend.dll' -or $_.Name -eq 'gfxstream_backend.dll' } | Select-Object -First 1
-            if ($dllCheck) { Write-Output "COMPILE-PARTIAL-BACKEND-DLL-PRESENT: $($dllCheck.FullName) $($dllCheck.Length) bytes; backend linked before unrelated unittest/tool link failures, continuing to Locate/Upload" }
+            if ($dllCheck) { Write-Output "COMPILE-PARTIAL-BACKEND-DLL-PRESENT: $($dllCheck.FullName) $($dllCheck.Length) bytes; backend linked before unrelated unittest/tool link failures, continuing to Locate/Upload"; $LASTEXITCODE = 0 }
             else { Write-Output 'COMPILE-FAILED-NO-DLL'; exit 1 }
           }
           Get-PSDrive C | Select-Object Used, Free
+          $LASTEXITCODE = 0
       - name: Locate libgfxstream_backend.dll
         shell: pwsh
         run: |
