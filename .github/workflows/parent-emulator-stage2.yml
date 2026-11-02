@@ -1,3 +1,10 @@
+# Attempt 30 (2026-11-02 10:55 PKT): run 41394070639 FAILED
+# step 36 Compile at [304/436], lz4cli threadpool.c.obj, hard
+# -Wimplicit-function-declaration errors for free/calloc/malloc
+# (clang treats these as errors under C99+, not -Werror promotions).
+# Fix (workflow-only, synced tree only): insert #include <stdlib.h>
+# into external/lz4/programs/threadpool.c before Compile.
+# No fork source change, no gate change, no DLL install.
 # Attempt 29 (2026-11-02 10:20 PKT): attempt 28 run 41390623875
 # FAILED step 34 Compile at [245/436], gfxstream_backend_static
 # ExternalObjectManager.cpp.obj, -Werror on aemu header warnings
@@ -1188,6 +1195,22 @@ jobs:
           Write-Output "WNOERROR-LINES-AFTER: $demoted"
           if ($after -ne 0) { Write-Output 'WERROR-REMAINS-IN-NINJA'; exit 1 }
           Write-Output 'NINJA-WERROR-DEMOTED'
+          Get-PSDrive C | Select-Object Used, Free
+      - name: Attempt 30 add stdlib include to lz4 threadpool (synced tree only)
+        shell: pwsh
+        run: |
+          Set-Location C:\e
+          Write-Output '--- attempt 30: run 41394070639 failed step 36 Compile at [304/436], lz4cli threadpool.c.obj, hard -Wimplicit-function-declaration errors for free/calloc/malloc (not -Werror promotions, so attempt 29 demote could not cover them) ---'
+          Write-Output 'Fix (synced tree only): insert #include <stdlib.h> into external/lz4/programs/threadpool.c. No fork source change, no gate change.'
+          $f = 'external\lz4\programs\threadpool.c'
+          if (-not (Test-Path $f)) { Write-Output 'NO-THREADPOOL-C-FOUND'; exit 1 }
+          $lines = Get-Content $f
+          if ($lines -match 'stdlib\.h') { Write-Output 'STDLIB-ALREADY-PRESENT'; exit 0 }
+          $idx = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\s*#include') { $idx = $i; break } }
+          if ($idx -lt 0) { $lines = @('#include <stdlib.h>') + $lines } else { $lines = $lines[0..$idx] + '#include <stdlib.h>' + $lines[($idx + 1)..($lines.Count - 1)] }
+          Set-Content $f $lines
+          Select-String -Path $f -Pattern 'stdlib\.h' | ForEach-Object { Write-Output "STDLIB-INCLUDED-LINE: $($_.LineNumber)" }
           Get-PSDrive C | Select-Object Used, Free
       - name: Compile backend (parent-only, verified invocation)
         shell: pwsh
