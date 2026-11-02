@@ -1,3 +1,12 @@
+# Attempt 34 (2026-11-02 14:45 PKT): run 41417790928 FAILED
+# step 39 Compile with COMPILE-FAILED-NO-DLL after the backend
+# linked at [382/436] as gfxstream_backend.dll. Root cause: the
+# attempt 33 guard and Locate searched only for
+# libgfxstream_backend.dll, but the parent-tree link output has
+# no lib prefix. Fix (workflow-only): match either filename in
+# both places; Locate still delivers as libgfxstream_backend.dll
+# and logs the full source path. No fork source change, no gate
+# change, no DLL install.
 # Attempt 33 (2026-11-02 12:55 PKT): run 41406239776 FAILED
 # step 39 Compile only on unrelated links after the backend DLL
 # itself linked at [384/436] (OpenglRender unittests: Rpcrt4
@@ -1317,7 +1326,7 @@ jobs:
           if ($compileCode -eq 0) { Write-Output 'COMPILE-OK' }
           else {
             Write-Output "COMPILE-EXIT-CODE: $compileCode"
-            $dllCheck = Get-ChildItem C:\e\external\qemu\objs -Recurse -Filter libgfxstream_backend.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+            $dllCheck = Get-ChildItem C:\e\external\qemu\objs -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'libgfxstream_backend.dll' -or $_.Name -eq 'gfxstream_backend.dll' } | Select-Object -First 1
             if ($dllCheck) { Write-Output "COMPILE-PARTIAL-BACKEND-DLL-PRESENT: $($dllCheck.FullName) $($dllCheck.Length) bytes; backend linked before unrelated unittest/tool link failures, continuing to Locate/Upload" }
             else { Write-Output 'COMPILE-FAILED-NO-DLL'; exit 1 }
           }
@@ -1325,7 +1334,7 @@ jobs:
       - name: Locate libgfxstream_backend.dll
         shell: pwsh
         run: |
-          $found = Get-ChildItem C:\e\external\qemu\objs -Recurse -Filter libgfxstream_backend.dll -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          $found = Get-ChildItem C:\e\external\qemu\objs -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'libgfxstream_backend.dll' -or $_.Name -eq 'gfxstream_backend.dll' } | Select-Object -ExpandProperty FullName
           Write-Output "FOUND-COUNT: $($found.Count)"
           foreach ($f in $found) { $item = Get-Item $f; Write-Output "$f $($item.Length)" }
           if (-not $found) { Write-Output 'DLL-NOT-FOUND-UNDER-OBJS'; Get-ChildItem C:\e\external\qemu\objs -ErrorAction SilentlyContinue | Select-Object Name; exit 1 }
