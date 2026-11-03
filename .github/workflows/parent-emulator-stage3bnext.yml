@@ -380,41 +380,6 @@ jobs:
         }
         Get-PSDrive C | Select-Object Used, Free
         $LASTEXITCODE = 0
-    - name: Stage 3b-next boringssl history search (fix 4)
-      shell: pwsh
-      run: |
-        Set-Location C:\e
-        Write-Output '--- Stage 3b-next fix 4: boringssl android-sources.cmake history ---'
-        $bssl = 'external\boringssl\android-sources.cmake'
-        if (Test-Path $bssl) { Write-Output 'BORINGSSL-ANDROID-SOURCES-ALREADY-PRESENT'; exit 0 }
-        if (Test-Path 'external\boringssl\BORINGSSL_REVISION') { Get-Content 'external\boringssl\BORINGSSL_REVISION' | Select-Object -First 5 | ForEach-Object { Write-Output "BORINGSSL-REVISION: $_" } }
-        Set-Location external\boringssl
-        $remote = (git remote 2>$null | Select-Object -First 1)
-        if (-not $remote) { git remote add origin https://android.googlesource.com/platform/external/boringssl 2>&1 | Select-Object -Last 3; $remote = 'origin'; Write-Output 'BORINGSSL-REMOTE-ADDED origin' }
-        Write-Output "BORINGSSL-REMOTE-USED: $remote"
-        git fetch --unshallow $remote 2>&1 | Select-Object -Last 5
-        Write-Output '--- commits touching android-sources.cmake (newest first) ---'
-        git log --all --oneline -- android-sources.cmake 2>&1 | Select-Object -First 10 | ForEach-Object { Write-Output "BORINGSSL-HISTORY: $_" }
-        $found = $null
-        $cands = git log --all --format=%H -- android-sources.cmake 2>$null | Select-Object -First 20
-        foreach ($c in $cands) {
-          git cat-file -e "$c`:android-sources.cmake" 2>$null
-          if ($LASTEXITCODE -eq 0) { $found = $c; break }
-          $parent = git rev-parse "$c^" 2>$null
-          if ($parent) {
-            git cat-file -e "$parent`:android-sources.cmake" 2>$null
-            if ($LASTEXITCODE -eq 0) { $found = $parent; break }
-          }
-        }
-        Write-Output "BORINGSSL-FILE-COMMIT: $found"
-        if (-not $found) { Write-Output 'BORINGSSL-ANDROID-SOURCES-NEVER-IN-HISTORY (fail fast; generation must be designed from evidence)'; exit 1 }
-        git checkout $found 2>&1 | Select-Object -Last 5
-        Write-Output "BORINGSSL-CHECKED-OUT: $found"
-        Write-Output "BORINGSSL-ANDROID-SOURCES-AFTER-CHECKOUT: $(Test-Path $bssl)"
-        if (-not (Test-Path $bssl)) { Write-Output 'BORINGSSL-FILE-STILL-MISSING-AFTER-CHECKOUT'; exit 1 }
-        Set-Location C:\e
-        Get-PSDrive C | Select-Object Used, Free
-        $LASTEXITCODE = 0
     - name: Diagnose LIBDRM check + sync libdrm closure (attempt 26)
       shell: pwsh
       run: "Set-Location C:\\e\nGet-PSDrive C | Select-Object Used, Free\nWrite-Output '--- attempt 26: Stage 2 run 41378832010 failed at step 29 Configure ---'\nWrite-Output 'CMake Error at third-party/CMakeLists.txt:239 (message): LIBDRM is not found.'\nWrite-Output 'Attempt 24 configured from external/qemu; attempt 25 --gfxstream_only switched the source dir to hardware/google/gfxstream, whose third-party CMakeLists demands LIBDRM.'\n$tp = 'hardware\\google\\gfxstream\\third-party\\CMakeLists.txt'\n$tu = 'hardware\\google\\gfxstream\\third_party\\CMakeLists.txt'\nif (Test-Path $tp) { Write-Output \"THIRD-PARTY-FILE: $tp\"; Get-Content $tp | Select-Object -Skip 200 -First 60 | ForEach-Object { \"$($_.Trim())\" } }\nelseif (Test-Path $tu) { Write-Output \"THIRD-PARTY-FILE-UNDERSCORE: $tu\"; Get-Content $tu | Select-Object -First 120 | ForEach-Object { \"$($_.Trim())\" } }\nelse { Write-Output 'NO-THIRD-PARTY-CMAKELISTS-UNDER-GFXSTREAM' }\nWrite-Output '--- LIBDRM references in synced gfxstream tree ---'\nGet-ChildItem hardware\\google\\gfxstream -Filter *.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nGet-ChildItem hardware\\google\\gfxstream -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nWrite-Output '--- manifest lines matching drm ---'\nif (Test-Path .repo\\manifests\\default.xml) { Select-String -Path .repo\\manifests\\default.xml -Pattern 'drm' | Select-Object -First 20 | ForEach-Object { \"$($_.LineNumber): $($_.Line.Trim())\" } } else { Write-Output 'NO-DEFAULT-XML' }\nWrite-Output '--- repo sync external/libdrm ---'\nrepo sync -j 4 external/libdrm 2>&1 | Select-Object -Last 5\nWrite-Output \"repo sync external/libdrm exit code: $LASTEXITCODE\"\nif (-not (Test-Path 'external\\libdrm')) {\n  Write-Output '--- fallback: shallow clone platform/external/libdrm -> external/libdrm ---'\n  git clone --depth 1 \"https://android.googlesource.com/platform/external/libdrm\" external\\libdrm 2>&1 | Select-Object -Last 5\n  Write-Output \"git clone external/libdrm exit code: $LASTEXITCODE\"\n}\nWrite-Output '--- attempt 26 sentinel report (no fail-fast; Configure is the judge) ---'\n$checks = @('hardware\\google\\gfxstream\\third-party\\CMakeLists.txt', 'external\\libdrm', 'external\\libdrm\\include\\xf86drm.h', 'external\\libdrm\\xf86drm.h')\nforeach ($k in $checks) { Write-Output \"SENTINEL ${k}: $(Test-Path $k)\" }\nGet-PSDrive C | Select-Object Used, Free\n"
@@ -448,6 +413,39 @@ jobs:
     - name: Stage 3 redo stage ninja at prebuilt resolver path (fix 3, real binary fix 4)
       shell: pwsh
       run: "\nSet-Location C:\\e\n$dest = 'C:\\e\\prebuilts\\ninja\\windows-x86'\nNew-Item -ItemType Directory -Force -Path $dest | Out-Null\nfunction Test-NinjaExe($path) {\n  $out = & $path --version 2>&1\n  $code = $LASTEXITCODE\n  $first = ($out | Select-Object -First 1)\n  Write-Output \"REDO-NINJA-TEST path=$path exit=$code out=$first\"\n  return ($code -eq 0)\n}\nif ((Test-Path \"$dest\\ninja.exe\") -and (Test-NinjaExe \"$dest\\ninja.exe\")) {\n  Write-Output \"REDO-NINJA-ALREADY-PRESENT-AND-WORKING: $dest\\ninja.exe\"\n} else {\n  $cands = @()\n  $real = 'C:\\ProgramData\\Chocolatey\\lib\\ninja\\tools\\ninja.exe'\n  if (Test-Path $real) { $cands += $real }\n  $shim = (where.exe ninja 2>$null | Select-Object -First 1)\n  if ($shim) {\n    if ($shim -match 'Chocolatey\\\\bin\\\\([^\\\\]+)\\.exe$') {\n      $pkg = $Matches[1]\n      $t = \"C:\\ProgramData\\Chocolatey\\lib\\$pkg\\tools\\$pkg.exe\"\n      if ((Test-Path $t) -and ($cands -notcontains $t)) { $cands += $t }\n    }\n    if ($cands -notcontains $shim) { $cands += $shim }\n  }\n  Write-Output \"REDO-NINJA-CANDIDATES: $($cands -join ', ')\"\n  $ok = $false\n  foreach ($cand in $cands) {\n    if ($cand -ne \"$dest\\ninja.exe\") { Copy-Item $cand \"$dest\\ninja.exe\" -Force }\n    Write-Output \"REDO-NINJA-STAGED: $cand -> $dest\\ninja.exe\"\n    if (Test-NinjaExe \"$dest\\ninja.exe\") { $ok = $true; break }\n    Write-Output \"REDO-NINJA-CANDIDATE-FAILED: $cand\"\n  }\n  if (-not $ok) { Write-Output 'REDO-NINJA-STAGE-FAILED: no candidate ninja binary runs --version successfully'; exit 1 }\n}\npython -c \"import shutil; print('REDO-NINJA-RESOLVER-PROBE:', shutil.which('ninja', path=r'C:\\e\\prebuilts\\ninja\\windows-x86'))\"\n"
+    - name: Stage 3b-next boringssl upstream generator (fix 4)
+      shell: pwsh
+      run: |
+        Set-Location C:\e
+        Write-Output '--- Stage 3b-next fix 4: boringssl android-sources.cmake from upstream generator ---'
+        Write-Output '--- why: fix 3 pinned the AOSP mirror, which has no util/ at all, so its generator path never existed; upstream boringssl util/generate_build_files.py writes android-sources.cmake in its cwd ---'
+        $bssl = 'external\boringssl\android-sources.cmake'
+        if (Test-Path $bssl) { Write-Output 'BORINGSSL-ANDROID-SOURCES-ALREADY-PRESENT'; exit 0 }
+        $found = Get-ChildItem external\boringssl -Filter generate_build_files.py -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        Write-Output "BORINGSSL-GENERATOR-IN-TREE: $found"
+        if (-not $found) {
+          $up = "$env:TEMP\boringssl-upstream"
+          Remove-Item -Recurse -Force $up -ErrorAction SilentlyContinue
+          git clone --shallow-since=2026-10-01 https://boringssl.googlesource.com/boringssl $up 2>&1 | Select-Object -Last 5
+          $pick = git -C $up rev-list --before='2026-10-21T00:00:00Z' -n 1 HEAD 2>$null
+          Write-Output "BORINGSSL-UPSTREAM-PICK: $pick"
+          if (-not $pick) { Write-Output 'BORINGSSL-UPSTREAM-PICK-FAILED'; exit 1 }
+          git -C $up checkout $pick 2>&1 | Select-Object -Last 5
+          $genUp = "$up\util\generate_build_files.py"
+          Write-Output "BORINGSSL-UPSTREAM-GENERATOR-EXISTS: $(Test-Path $genUp)"
+          if (-not (Test-Path $genUp)) { Write-Output 'BORINGSSL-UPSTREAM-GENERATOR-MISSING'; exit 1 }
+          New-Item -ItemType Directory -Force -Path external\boringssl\util | Out-Null
+          Copy-Item $genUp external\boringssl\util\generate_build_files.py -Force
+          $found = 'external\boringssl\util\generate_build_files.py'
+        }
+        Write-Output "BORINGSSL-GENERATOR-USED: $found"
+        Set-Location external\boringssl
+        python util\generate_build_files.py 2>&1 | Select-Object -Last 30
+        Write-Output "BORINGSSL-ANDROID-SOURCES-AFTER-GEN: $(Test-Path android-sources.cmake)"
+        if (Test-Path android-sources.cmake) { Get-Item android-sources.cmake | Select-Object Length; Get-Content android-sources.cmake -TotalCount 5 }
+        else { Write-Output 'BORINGSSL-ANDROID-SOURCES-STILL-MISSING'; exit 1 }
+        Set-Location C:\e
+        Get-PSDrive C | Select-Object Used, Free
     - name: Configure attempt (only if a configure task exists)
       shell: pwsh
       timeout-minutes: 120
