@@ -352,6 +352,32 @@ jobs:
     - name: Stage 3 redo stage ninja at prebuilt resolver path (fix 3, real binary fix 4)
       shell: pwsh
       run: "\nSet-Location C:\\e\n$dest = 'C:\\e\\prebuilts\\ninja\\windows-x86'\nNew-Item -ItemType Directory -Force -Path $dest | Out-Null\nfunction Test-NinjaExe($path) {\n  $out = & $path --version 2>&1\n  $code = $LASTEXITCODE\n  $first = ($out | Select-Object -First 1)\n  Write-Output \"REDO-NINJA-TEST path=$path exit=$code out=$first\"\n  return ($code -eq 0)\n}\nif ((Test-Path \"$dest\\ninja.exe\") -and (Test-NinjaExe \"$dest\\ninja.exe\")) {\n  Write-Output \"REDO-NINJA-ALREADY-PRESENT-AND-WORKING: $dest\\ninja.exe\"\n} else {\n  $cands = @()\n  $real = 'C:\\ProgramData\\Chocolatey\\lib\\ninja\\tools\\ninja.exe'\n  if (Test-Path $real) { $cands += $real }\n  $shim = (where.exe ninja 2>$null | Select-Object -First 1)\n  if ($shim) {\n    if ($shim -match 'Chocolatey\\\\bin\\\\([^\\\\]+)\\.exe$') {\n      $pkg = $Matches[1]\n      $t = \"C:\\ProgramData\\Chocolatey\\lib\\$pkg\\tools\\$pkg.exe\"\n      if ((Test-Path $t) -and ($cands -notcontains $t)) { $cands += $t }\n    }\n    if ($cands -notcontains $shim) { $cands += $shim }\n  }\n  Write-Output \"REDO-NINJA-CANDIDATES: $($cands -join ', ')\"\n  $ok = $false\n  foreach ($cand in $cands) {\n    if ($cand -ne \"$dest\\ninja.exe\") { Copy-Item $cand \"$dest\\ninja.exe\" -Force }\n    Write-Output \"REDO-NINJA-STAGED: $cand -> $dest\\ninja.exe\"\n    if (Test-NinjaExe \"$dest\\ninja.exe\") { $ok = $true; break }\n    Write-Output \"REDO-NINJA-CANDIDATE-FAILED: $cand\"\n  }\n  if (-not $ok) { Write-Output 'REDO-NINJA-STAGE-FAILED: no candidate ninja binary runs --version successfully'; exit 1 }\n}\npython -c \"import shutil; print('REDO-NINJA-RESOLVER-PROBE:', shutil.which('ninja', path=r'C:\\e\\prebuilts\\ninja\\windows-x86'))\"\n"
+    - name: Sync Qt prebuilt (stage3bnext fix 2)
+      shell: pwsh
+      run: 'Set-Location C:\e
+        Write-Output ''--- stage3bnext fix 2: run 41727183055 failed Configure at emu-qt5-config.cmake:83, missing Qt6 uic ---''
+        Write-Output ''Unable to add Qt6::uic due to missing C:/e/prebuilts/android-emulator-build/qt/windows_msvc-x86_64/bin/uic.exe (via android/emu/crashreport) ---''
+        Write-Output ''Fix-2 narrowed common sync (stage3redo fix 2) deliberately excluded qt; full-feature gfxstream configure needs it, so sync qt alone, not the old 7-project batch (no system-images, no archive).''
+        if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern ''android-emulator-build/qt'' | Select-Object -First 5 | ForEach-Object { Write-Output $_.Line.Trim() } } else { Write-Output ''NO-DEFAULT-XML'' }
+        $uic = ''C:\e\prebuilts\android-emulator-build\qt\windows_msvc-x86_64\bin\uic.exe''
+        Write-Output "QT-UIC-EXISTS-BEFORE: $(Test-Path $uic) ($uic)"
+        Get-PSDrive C | Select-Object Used, Free
+        if (-not (Test-Path $uic)) {
+          repo sync -j 4 prebuilts/android-emulator-build/qt 2>&1 | Select-Object -Last 10
+          Write-Output "QT-SYNC-EXIT: $LASTEXITCODE"
+        }
+        Write-Output "QT-UIC-EXISTS-AFTER-SYNC: $(Test-Path $uic)"
+        if (-not (Test-Path $uic)) {
+          Write-Output ''--- fallback: shallow clone of the qt prebuilt repo ---''
+          git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build/qt C:\e\prebuilts\android-emulator-build\qt 2>&1 | Select-Object -Last 10
+          Write-Output "QT-CLONE-EXIT: $LASTEXITCODE"
+        }
+        Write-Output "QT-UIC-EXISTS-FINAL: $(Test-Path $uic)"
+        if (Test-Path $uic) { (Get-Item $uic).Length }
+        Get-PSDrive C | Select-Object Used, Free
+        if (-not (Test-Path $uic)) { Write-Output ''QT-UIC-STILL-MISSING: Configure would fail again at emu-qt5-config.cmake:83; failing fast here.''; exit 1 }
+        Write-Output ''QT-UIC-READY''
+        '
     - name: Configure attempt (only if a configure task exists)
       shell: pwsh
       timeout-minutes: 120
