@@ -319,6 +319,33 @@ jobs:
     - name: Sync ANGLE EGL headers closure (attempt 22)
       shell: pwsh
       run: "Set-Location C:\\e\nGet-PSDrive C | Select-Object Used, Free\nWrite-Output '--- attempt 22: Stage 2 run 41343163080 failed at Compile (step 28) after 3225/10861 objects, NOT disk (5.6 GB free) ---'\nWrite-Output 'fatal error: EGL/egl.h file not found, compiling android/android-emu/android/opengles.cpp via hardware/google/gfxstream/include/OpenGLESDispatch/RenderEGL_functions.h'\nWrite-Output 'The ANGLE prebuilt cannot supply it: prebuilts/android-emulator-build/common/ANGLE/*/include holds only ShaderTranslator.h, no EGL dir (verified on the emu-master-dev branch).'\nWrite-Output 'The tree convention for EGL headers is external/angle/include (hardware/google/aemu host-common references ../../../external/angle/include); external/angle is a manifest project that no earlier closure synced.'\nif (Test-Path .repo\\manifests\\default.xml) { Select-String -Path .repo\\manifests\\default.xml -Pattern 'path=\"external/angle\"' | ForEach-Object { \"$($_.LineNumber): $($_.Line.Trim())\" } } else { Write-Output 'NO-DEFAULT-XML' }\n$cands = @('external/angle')\nforeach ($c in $cands) {\n  Write-Output \"--- repo sync $c ---\"\n  repo sync -j 4 $c 2>&1 | Select-Object -Last 5\n  Write-Output \"repo sync $c exit code: $LASTEXITCODE\"\n  if (-not (Test-Path $c)) {\n    $mline = Select-String -Path .repo\\manifests\\default.xml -Pattern \"path=`\"$c`\"\" | Select-Object -First 1\n    $mname = $null\n    if ($mline -and ($mline.Line -match 'name=\"([^\"]+)\"')) { $mname = $Matches[1] }\n    if (-not $mname) { $mname = 'platform/external/angle' }\n    Write-Output \"--- fallback: shallow clone $mname -> $c ---\"\n    git clone --depth 1 \"https://android.googlesource.com/$mname\" $c 2>&1 | Select-Object -Last 5\n    Write-Output \"git clone $c exit code: $LASTEXITCODE\"\n  }\n}\nWrite-Output '--- attempt 22 sentinel report ---'\n$checks = @('external/angle/include/EGL/egl.h', 'external/angle/include/EGL/eglplatform.h', 'external/angle/include/KHR/khrplatform.h')\nforeach ($k in $checks) { Write-Output \"SENTINEL ${k}: $(Test-Path $k)\" }\nif (-not (Test-Path 'external/angle/include/EGL/egl.h')) { Write-Output 'ANGLE-EGL-HEADER-STILL-MISSING: Compile would fail with the same fatal error; failing fast here instead of after a full sync+configure.'; exit 1 }\nGet-PSDrive C | Select-Object Used, Free\n"
+    - name: Stage 3b-next full-configure closure (fix 2)
+      shell: pwsh
+      run: |
+        Set-Location C:\e
+        Write-Output '--- Stage 3b-next fix 2: full-configure closure ---'
+        repo sync -j 4 external/crashpad 2>&1 | Select-Object -Last 5
+        if (-not (Test-Path 'external\crashpad')) {
+          git clone --depth 1 https://android.googlesource.com/platform/external/crashpad external\crashpad 2>&1 | Select-Object -Last 5
+        }
+        Write-Output "CRASHPAD-EXISTS: $(Test-Path 'external\crashpad')"
+        if (-not (Test-Path 'external\crashpad')) { Write-Output 'CRASHPAD-STILL-MISSING'; exit 1 }
+        repo sync -j 4 prebuilts/android-emulator-build/qt 2>&1 | Select-Object -Last 5
+        $uic = 'prebuilts\android-emulator-build\qt\windows_msvc-x86_64\bin\uic.exe'
+        Write-Output "QT-UIC-EXISTS: $(Test-Path $uic) ($uic)"
+        if (-not (Test-Path $uic)) { Write-Output 'QT-UIC-STILL-MISSING'; exit 1 }
+        $bssl = 'external\boringssl\android-sources.cmake'
+        Write-Output "BORINGSSL-ANDROID-SOURCES-EXISTS: $(Test-Path $bssl)"
+        if (-not (Test-Path $bssl)) {
+          $gen = 'external\boringssl\util\generate_build_files.py'
+          Write-Output "BORINGSSL-GENERATOR-EXISTS: $(Test-Path $gen)"
+          if (Test-Path $gen) {
+            python $gen 2>&1 | Select-Object -Last 20
+            Write-Output "BORINGSSL-ANDROID-SOURCES-AFTER-GEN: $(Test-Path $bssl)"
+          }
+        }
+        Get-PSDrive C | Select-Object Used, Free
+        $LASTEXITCODE = 0
     - name: Diagnose LIBDRM check + sync libdrm closure (attempt 26)
       shell: pwsh
       run: "Set-Location C:\\e\nGet-PSDrive C | Select-Object Used, Free\nWrite-Output '--- attempt 26: Stage 2 run 41378832010 failed at step 29 Configure ---'\nWrite-Output 'CMake Error at third-party/CMakeLists.txt:239 (message): LIBDRM is not found.'\nWrite-Output 'Attempt 24 configured from external/qemu; attempt 25 --gfxstream_only switched the source dir to hardware/google/gfxstream, whose third-party CMakeLists demands LIBDRM.'\n$tp = 'hardware\\google\\gfxstream\\third-party\\CMakeLists.txt'\n$tu = 'hardware\\google\\gfxstream\\third_party\\CMakeLists.txt'\nif (Test-Path $tp) { Write-Output \"THIRD-PARTY-FILE: $tp\"; Get-Content $tp | Select-Object -Skip 200 -First 60 | ForEach-Object { \"$($_.Trim())\" } }\nelseif (Test-Path $tu) { Write-Output \"THIRD-PARTY-FILE-UNDERSCORE: $tu\"; Get-Content $tu | Select-Object -First 120 | ForEach-Object { \"$($_.Trim())\" } }\nelse { Write-Output 'NO-THIRD-PARTY-CMAKELISTS-UNDER-GFXSTREAM' }\nWrite-Output '--- LIBDRM references in synced gfxstream tree ---'\nGet-ChildItem hardware\\google\\gfxstream -Filter *.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nGet-ChildItem hardware\\google\\gfxstream -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nWrite-Output '--- manifest lines matching drm ---'\nif (Test-Path .repo\\manifests\\default.xml) { Select-String -Path .repo\\manifests\\default.xml -Pattern 'drm' | Select-Object -First 20 | ForEach-Object { \"$($_.LineNumber): $($_.Line.Trim())\" } } else { Write-Output 'NO-DEFAULT-XML' }\nWrite-Output '--- repo sync external/libdrm ---'\nrepo sync -j 4 external/libdrm 2>&1 | Select-Object -Last 5\nWrite-Output \"repo sync external/libdrm exit code: $LASTEXITCODE\"\nif (-not (Test-Path 'external\\libdrm')) {\n  Write-Output '--- fallback: shallow clone platform/external/libdrm -> external/libdrm ---'\n  git clone --depth 1 \"https://android.googlesource.com/platform/external/libdrm\" external\\libdrm 2>&1 | Select-Object -Last 5\n  Write-Output \"git clone external/libdrm exit code: $LASTEXITCODE\"\n}\nWrite-Output '--- attempt 26 sentinel report (no fail-fast; Configure is the judge) ---'\n$checks = @('hardware\\google\\gfxstream\\third-party\\CMakeLists.txt', 'external\\libdrm', 'external\\libdrm\\include\\xf86drm.h', 'external\\libdrm\\xf86drm.h')\nforeach ($k in $checks) { Write-Output \"SENTINEL ${k}: $(Test-Path $k)\" }\nGet-PSDrive C | Select-Object Used, Free\n"
@@ -352,32 +379,6 @@ jobs:
     - name: Stage 3 redo stage ninja at prebuilt resolver path (fix 3, real binary fix 4)
       shell: pwsh
       run: "\nSet-Location C:\\e\n$dest = 'C:\\e\\prebuilts\\ninja\\windows-x86'\nNew-Item -ItemType Directory -Force -Path $dest | Out-Null\nfunction Test-NinjaExe($path) {\n  $out = & $path --version 2>&1\n  $code = $LASTEXITCODE\n  $first = ($out | Select-Object -First 1)\n  Write-Output \"REDO-NINJA-TEST path=$path exit=$code out=$first\"\n  return ($code -eq 0)\n}\nif ((Test-Path \"$dest\\ninja.exe\") -and (Test-NinjaExe \"$dest\\ninja.exe\")) {\n  Write-Output \"REDO-NINJA-ALREADY-PRESENT-AND-WORKING: $dest\\ninja.exe\"\n} else {\n  $cands = @()\n  $real = 'C:\\ProgramData\\Chocolatey\\lib\\ninja\\tools\\ninja.exe'\n  if (Test-Path $real) { $cands += $real }\n  $shim = (where.exe ninja 2>$null | Select-Object -First 1)\n  if ($shim) {\n    if ($shim -match 'Chocolatey\\\\bin\\\\([^\\\\]+)\\.exe$') {\n      $pkg = $Matches[1]\n      $t = \"C:\\ProgramData\\Chocolatey\\lib\\$pkg\\tools\\$pkg.exe\"\n      if ((Test-Path $t) -and ($cands -notcontains $t)) { $cands += $t }\n    }\n    if ($cands -notcontains $shim) { $cands += $shim }\n  }\n  Write-Output \"REDO-NINJA-CANDIDATES: $($cands -join ', ')\"\n  $ok = $false\n  foreach ($cand in $cands) {\n    if ($cand -ne \"$dest\\ninja.exe\") { Copy-Item $cand \"$dest\\ninja.exe\" -Force }\n    Write-Output \"REDO-NINJA-STAGED: $cand -> $dest\\ninja.exe\"\n    if (Test-NinjaExe \"$dest\\ninja.exe\") { $ok = $true; break }\n    Write-Output \"REDO-NINJA-CANDIDATE-FAILED: $cand\"\n  }\n  if (-not $ok) { Write-Output 'REDO-NINJA-STAGE-FAILED: no candidate ninja binary runs --version successfully'; exit 1 }\n}\npython -c \"import shutil; print('REDO-NINJA-RESOLVER-PROBE:', shutil.which('ninja', path=r'C:\\e\\prebuilts\\ninja\\windows-x86'))\"\n"
-    - name: Sync Qt prebuilt (stage3bnext fix 2)
-      shell: pwsh
-      run: 'Set-Location C:\e
-        Write-Output ''--- stage3bnext fix 2: run 41727183055 failed Configure at emu-qt5-config.cmake:83, missing Qt6 uic ---''
-        Write-Output ''Unable to add Qt6::uic due to missing C:/e/prebuilts/android-emulator-build/qt/windows_msvc-x86_64/bin/uic.exe (via android/emu/crashreport) ---''
-        Write-Output ''Fix-2 narrowed common sync (stage3redo fix 2) deliberately excluded qt; full-feature gfxstream configure needs it, so sync qt alone, not the old 7-project batch (no system-images, no archive).''
-        if (Test-Path .repo\manifests\default.xml) { Select-String -Path .repo\manifests\default.xml -Pattern ''android-emulator-build/qt'' | Select-Object -First 5 | ForEach-Object { Write-Output $_.Line.Trim() } } else { Write-Output ''NO-DEFAULT-XML'' }
-        $uic = ''C:\e\prebuilts\android-emulator-build\qt\windows_msvc-x86_64\bin\uic.exe''
-        Write-Output "QT-UIC-EXISTS-BEFORE: $(Test-Path $uic) ($uic)"
-        Get-PSDrive C | Select-Object Used, Free
-        if (-not (Test-Path $uic)) {
-          repo sync -j 4 prebuilts/android-emulator-build/qt 2>&1 | Select-Object -Last 10
-          Write-Output "QT-SYNC-EXIT: $LASTEXITCODE"
-        }
-        Write-Output "QT-UIC-EXISTS-AFTER-SYNC: $(Test-Path $uic)"
-        if (-not (Test-Path $uic)) {
-          Write-Output ''--- fallback: shallow clone of the qt prebuilt repo ---''
-          git clone --depth 1 https://android.googlesource.com/platform/prebuilts/android-emulator-build/qt C:\e\prebuilts\android-emulator-build\qt 2>&1 | Select-Object -Last 10
-          Write-Output "QT-CLONE-EXIT: $LASTEXITCODE"
-        }
-        Write-Output "QT-UIC-EXISTS-FINAL: $(Test-Path $uic)"
-        if (Test-Path $uic) { (Get-Item $uic).Length }
-        Get-PSDrive C | Select-Object Used, Free
-        if (-not (Test-Path $uic)) { Write-Output ''QT-UIC-STILL-MISSING: Configure would fail again at emu-qt5-config.cmake:83; failing fast here.''; exit 1 }
-        Write-Output ''QT-UIC-READY''
-        '
     - name: Configure attempt (only if a configure task exists)
       shell: pwsh
       timeout-minutes: 120
