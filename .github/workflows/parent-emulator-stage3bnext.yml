@@ -346,6 +346,40 @@ jobs:
         }
         Get-PSDrive C | Select-Object Used, Free
         $LASTEXITCODE = 0
+    - name: Stage 3b-next boringssl pin and generate (fix 3)
+      shell: pwsh
+      run: |
+        Set-Location C:\e
+        Write-Output '--- Stage 3b-next fix 3: boringssl android-sources.cmake ---'
+        Write-Output '--- qemu pin tree references to android-sources / generate_build_files ---'
+        git -C external/qemu grep -n 'android-sources' 2>$null | Select-Object -First 10
+        git -C external/qemu grep -n 'generate_build_files' 2>$null | Select-Object -First 10
+        Write-Output '--- synced boringssl tree top level and util dir ---'
+        Get-ChildItem external\boringssl -ErrorAction SilentlyContinue | Select-Object -First 30 Name
+        Get-ChildItem external\boringssl\util -ErrorAction SilentlyContinue | Select-Object -First 30 Name
+        $bssl = 'external\boringssl\android-sources.cmake'
+        if (Test-Path $bssl) { Write-Output 'BORINGSSL-ANDROID-SOURCES-ALREADY-PRESENT'; exit 0 }
+        $tmp = "$env:TEMP\boringssl-pin"
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+        git clone --shallow-since=2026-10-01 https://android.googlesource.com/platform/external/boringssl $tmp 2>&1 | Select-Object -Last 5
+        $pick = git -C $tmp rev-list --before='2026-10-21T00:00:00Z' -n 1 HEAD 2>$null
+        Write-Output "BORINGSSL-PIN-PICK: $pick"
+        if (-not $pick) { Write-Output 'BORINGSSL-PIN-PICK-FAILED'; exit 1 }
+        git -C $tmp checkout $pick 2>&1 | Select-Object -Last 5
+        Remove-Item -Recurse -Force external\boringssl -ErrorAction SilentlyContinue
+        Copy-Item $tmp external\boringssl -Recurse -Force
+        if (-not (Test-Path 'external\boringssl\.git')) { Copy-Item "$tmp\.git" 'external\boringssl\.git' -Recurse -Force }
+        Write-Output "BORINGSSL-PINNED-TO: $pick"
+        Write-Output "BORINGSSL-ANDROID-SOURCES-AFTER-PIN: $(Test-Path $bssl)"
+        $gen = 'external\boringssl\util\generate_build_files.py'
+        Write-Output "BORINGSSL-GENERATOR-AFTER-PIN: $(Test-Path $gen)"
+        if ((-not (Test-Path $bssl)) -and (Test-Path $gen)) {
+          python $gen --help 2>&1 | Select-Object -First 20
+          python $gen 2>&1 | Select-Object -Last 20
+          Write-Output "BORINGSSL-ANDROID-SOURCES-AFTER-GEN: $(Test-Path $bssl)"
+        }
+        Get-PSDrive C | Select-Object Used, Free
+        $LASTEXITCODE = 0
     - name: Diagnose LIBDRM check + sync libdrm closure (attempt 26)
       shell: pwsh
       run: "Set-Location C:\\e\nGet-PSDrive C | Select-Object Used, Free\nWrite-Output '--- attempt 26: Stage 2 run 41378832010 failed at step 29 Configure ---'\nWrite-Output 'CMake Error at third-party/CMakeLists.txt:239 (message): LIBDRM is not found.'\nWrite-Output 'Attempt 24 configured from external/qemu; attempt 25 --gfxstream_only switched the source dir to hardware/google/gfxstream, whose third-party CMakeLists demands LIBDRM.'\n$tp = 'hardware\\google\\gfxstream\\third-party\\CMakeLists.txt'\n$tu = 'hardware\\google\\gfxstream\\third_party\\CMakeLists.txt'\nif (Test-Path $tp) { Write-Output \"THIRD-PARTY-FILE: $tp\"; Get-Content $tp | Select-Object -Skip 200 -First 60 | ForEach-Object { \"$($_.Trim())\" } }\nelseif (Test-Path $tu) { Write-Output \"THIRD-PARTY-FILE-UNDERSCORE: $tu\"; Get-Content $tu | Select-Object -First 120 | ForEach-Object { \"$($_.Trim())\" } }\nelse { Write-Output 'NO-THIRD-PARTY-CMAKELISTS-UNDER-GFXSTREAM' }\nWrite-Output '--- LIBDRM references in synced gfxstream tree ---'\nGet-ChildItem hardware\\google\\gfxstream -Filter *.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nGet-ChildItem hardware\\google\\gfxstream -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM' | Select-Object -First 30 | ForEach-Object { \"$($_.Path):$($_.LineNumber): $($_.Line.Trim())\" }\nWrite-Output '--- manifest lines matching drm ---'\nif (Test-Path .repo\\manifests\\default.xml) { Select-String -Path .repo\\manifests\\default.xml -Pattern 'drm' | Select-Object -First 20 | ForEach-Object { \"$($_.LineNumber): $($_.Line.Trim())\" } } else { Write-Output 'NO-DEFAULT-XML' }\nWrite-Output '--- repo sync external/libdrm ---'\nrepo sync -j 4 external/libdrm 2>&1 | Select-Object -Last 5\nWrite-Output \"repo sync external/libdrm exit code: $LASTEXITCODE\"\nif (-not (Test-Path 'external\\libdrm')) {\n  Write-Output '--- fallback: shallow clone platform/external/libdrm -> external/libdrm ---'\n  git clone --depth 1 \"https://android.googlesource.com/platform/external/libdrm\" external\\libdrm 2>&1 | Select-Object -Last 5\n  Write-Output \"git clone external/libdrm exit code: $LASTEXITCODE\"\n}\nWrite-Output '--- attempt 26 sentinel report (no fail-fast; Configure is the judge) ---'\n$checks = @('hardware\\google\\gfxstream\\third-party\\CMakeLists.txt', 'external\\libdrm', 'external\\libdrm\\include\\xf86drm.h', 'external\\libdrm\\xf86drm.h')\nforeach ($k in $checks) { Write-Output \"SENTINEL ${k}: $(Test-Path $k)\" }\nGet-PSDrive C | Select-Object Used, Free\n"
