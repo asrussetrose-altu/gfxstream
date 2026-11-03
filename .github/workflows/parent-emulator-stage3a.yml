@@ -1271,6 +1271,7 @@ jobs:
           $defs | Out-File -FilePath "$env:GITHUB_WORKSPACE\stage3a-definitions.txt" -Encoding utf8
           "gate_pass=$($gate.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Output "3A-GATE-G-3a1 gate_pass=$($gate.ToString().ToLower())"
+          $LASTEXITCODE = 0
       - name: Stage 3a owning targets
         if: steps.symgrep.outputs.gate_pass == 'true'
         shell: pwsh
