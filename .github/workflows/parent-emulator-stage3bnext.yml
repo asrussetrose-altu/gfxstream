@@ -423,18 +423,21 @@ jobs:
       run: |
         Set-Location C:\e
         Write-Output '--- Stage 3b-next fix 8: nasm full-clone pin + LIBDRM locate (diagnose only) ---'
-        Write-Output '--- LIBDRM locate: message in CMakeLists.txt and *.cmake, plus third-party dirs ---'
-        foreach ($root in @('external\qemu', 'hardware\google\gfxstream', 'external\aemu')) {
-          Get-ChildItem $root -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-FILE: $($_.Path):$($_.LineNumber)" }
-          Get-ChildItem $root -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-CMAKE: $($_.Path):$($_.LineNumber)" }
+        Write-Output '--- LIBDRM locate: message in CMakeLists.txt and *.cmake across all synced top-level trees except prebuilts ---'
+        $tops = Get-ChildItem C:\e -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'prebuilts' } | Select-Object -ExpandProperty FullName
+        foreach ($root in $tops) {
+          Get-ChildItem $root -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\.git\\' } | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-FILE: $($_.Path):$($_.LineNumber)" }
+          Get-ChildItem $root -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\.git\\' } | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-CMAKE: $($_.Path):$($_.LineNumber)" }
         }
         foreach ($d in @('external\qemu\third-party', 'hardware\google\gfxstream\third-party', 'hardware\google\gfxstream\third_party', 'external\aemu\third-party')) { Write-Output "THIRD-PARTY-DIR-EXISTS: $d = $(Test-Path $d)" }
         if (Test-Path 'external\nasm\asm\float.c') { Write-Output 'NASM-FLOAT-ALREADY-PRESENT'; exit 0 }
+        Write-Output '--- synced nasm identity (before replacing it) ---'
+        git -C external\nasm remote -v 2>$null | Select-Object -First 4 | ForEach-Object { Write-Output "NASM-SYNCED-REMOTE: $_" }
+        git -C external\nasm log -1 --format='NASM-SYNCED-HEAD: %H %ci' 2>$null
         $tmp = "$env:TEMP\nasm-pin"
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
         git clone https://android.googlesource.com/platform/external/nasm $tmp 2>&1 | Select-Object -Last 5
-        if ($LASTEXITCODE -ne 0) { Write-Output 'NASM-GOOGLESOURCE-CLONE-FAILED, trying GitHub mirror'; Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue; git clone https://github.com/netwide-assembler/nasm.git $tmp 2>&1 | Select-Object -Last 5 }
-        if (-not (Test-Path "$tmp\.git")) { Write-Output 'NASM-CLONE-FAILED'; exit 1 }
+        if (-not (Test-Path "$tmp\.git")) { Write-Output 'NASM-FULL-CLONE-FAILED'; exit 1 }
         $pick = git -C $tmp rev-list --before='2026-10-21T00:00:00Z' -n 1 HEAD 2>$null
         Write-Output "NASM-PIN-PICK: $pick"
         if (-not $pick) { Write-Output 'NASM-NO-PRE-OCT21-COMMIT-IN-CLONE'; exit 1 }
@@ -492,9 +495,10 @@ jobs:
       run: |
         Set-Location C:\e
         Write-Output '--- Stage 3b-next LIBDRM post-mortem (runs even if Configure failed) ---'
-        foreach ($root in @('external\qemu', 'hardware\google\gfxstream', 'external\aemu')) {
-          Get-ChildItem $root -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-PM-FILE: $($_.Path):$($_.LineNumber)" }
-          Get-ChildItem $root -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-PM-CMAKE: $($_.Path):$($_.LineNumber)" }
+        $tops = Get-ChildItem C:\e -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'prebuilts' } | Select-Object -ExpandProperty FullName
+        foreach ($root in $tops) {
+          Get-ChildItem $root -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\.git\\' } | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-PM-FILE: $($_.Path):$($_.LineNumber)" }
+          Get-ChildItem $root -Filter *.cmake -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\.git\\' } | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-PM-CMAKE: $($_.Path):$($_.LineNumber)" }
         }
         foreach ($root in @('hardware\google\gfxstream', 'external\aemu')) {
           Get-ChildItem $root -Directory -Recurse -Depth 3 -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'third-party' } | Select-Object -First 10 | ForEach-Object { Write-Output "LIBDRM-PM-THIRD-PARTY-DIR: $($_.FullName)" }
