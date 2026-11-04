@@ -418,11 +418,11 @@ jobs:
         if (-not (Test-Path $bssl)) { Write-Output 'BORINGSSL-FILE-STILL-MISSING-AFTER-CHECKOUT'; exit 1 }
         Get-PSDrive C | Select-Object Used, Free
         $LASTEXITCODE = 0
-    - name: Stage 3b-next nasm clone-pin to pre-Oct-21 (fix 7) + LIBDRM locate (diagnose only)
+    - name: Stage 3b-next nasm full-clone pin to pre-Oct-21 (fix 8) + LIBDRM locate (diagnose only)
       shell: pwsh
       run: |
         Set-Location C:\e
-        Write-Output '--- Stage 3b-next fix 7: nasm clone-pin + LIBDRM locate (diagnose only) ---'
+        Write-Output '--- Stage 3b-next fix 8: nasm full-clone pin + LIBDRM locate (diagnose only) ---'
         Write-Output '--- LIBDRM locate: message in CMakeLists.txt and *.cmake, plus third-party dirs ---'
         foreach ($root in @('external\qemu', 'hardware\google\gfxstream', 'external\aemu')) {
           Get-ChildItem $root -Filter CMakeLists.txt -Recurse -ErrorAction SilentlyContinue | Select-String -Pattern 'LIBDRM is not found' -List -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { Write-Output "LIBDRM-FILE: $($_.Path):$($_.LineNumber)" }
@@ -432,7 +432,9 @@ jobs:
         if (Test-Path 'external\nasm\asm\float.c') { Write-Output 'NASM-FLOAT-ALREADY-PRESENT'; exit 0 }
         $tmp = "$env:TEMP\nasm-pin"
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-        git clone --shallow-since=2026-10-01 https://android.googlesource.com/platform/external/nasm $tmp 2>&1 | Select-Object -Last 5
+        git clone https://android.googlesource.com/platform/external/nasm $tmp 2>&1 | Select-Object -Last 5
+        if ($LASTEXITCODE -ne 0) { Write-Output 'NASM-GOOGLESOURCE-CLONE-FAILED, trying GitHub mirror'; Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue; git clone https://github.com/netwide-assembler/nasm.git $tmp 2>&1 | Select-Object -Last 5 }
+        if (-not (Test-Path "$tmp\.git")) { Write-Output 'NASM-CLONE-FAILED'; exit 1 }
         $pick = git -C $tmp rev-list --before='2026-10-21T00:00:00Z' -n 1 HEAD 2>$null
         Write-Output "NASM-PIN-PICK: $pick"
         if (-not $pick) { Write-Output 'NASM-NO-PRE-OCT21-COMMIT-IN-CLONE'; exit 1 }
